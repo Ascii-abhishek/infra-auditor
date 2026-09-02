@@ -246,3 +246,60 @@ One unreachable database or missing permission does not erase AWS evidence for t
 
 ### Future reconsideration trigger
 If snapshot consumers require stricter fail-fast semantics for a particular workflow.
+
+## DEC-0009 - Temporary AWS identities and separated runtime roles
+
+Date: 2026-09-02
+Status: Accepted
+
+### Scope / Module
+aws, identity, local development, ecs, scheduler, ci-cd
+
+### Decision
+Use temporary AWS credentials for humans and workloads. Local development should
+prefer IAM Identity Center with a project-specific `InfraAuditorDeveloper`
+permission set and an optional `infra-auditor-dev` AWS profile. Application code
+continues to use boto3's standard credential/provider chain.
+
+Future production will use separate roles:
+
+- ECS task role for `infra-auditor` application AWS permissions.
+- ECS task execution role for ECS/Fargate image pull, logging, and execution
+  operations.
+- EventBridge Scheduler execution role for starting the approved ECS task and
+  passing only approved ECS roles.
+- GitHub Actions OIDC deployment role for future CI/CD.
+
+### Rationale / Why
+AWS documentation supports IAM Identity Center and SDK credential providers for
+short-term local credentials. ECS documentation separates application task
+permissions from ECS execution permissions. EventBridge scheduled ECS tasks need
+their own execution role when running tasks and passing roles.
+
+### Alternatives considered
+- Long-lived IAM user and access keys for local development.
+- Requiring a hard-coded local AWS profile in production.
+- Placing application AWS permissions in the ECS task execution role.
+- Giving the application task role scheduler permissions.
+- GitHub Actions access keys for future CI/CD.
+
+### Trade-offs & constraints
+Initial setup requires IAM Identity Center and permission-set administration.
+The payoff is clearer least privilege and no normal project workflow based on
+long-lived AWS access keys.
+
+### Security implications
+No AWS access keys are stored in `.env` files as the normal auth mechanism.
+Developer, runtime, execution, scheduler, and future CI/CD permissions remain
+separate so each principal has a narrow blast radius.
+
+### Operational implications
+Local runs use `aws sso login --profile infra-auditor-dev` and then
+`AWS_PROFILE=infra-auditor-dev uv run infra-auditor ...`, or an optional
+non-secret `INFRA_AUDITOR_AWS_PROFILE`. Production ECS tasks rely on task-role
+credentials supplied by AWS.
+
+### Future reconsideration trigger
+If IAM Identity Center is unavailable or unsuitable for the AWS organization, or
+if a future deployment target other than ECS Fargate becomes the approved
+runtime.

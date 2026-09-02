@@ -86,6 +86,18 @@ Use `uv run ruff format .` when formatting is needed.
 - Update `docs/project-status.md` after meaningful sessions.
 - Keep docs concise and useful for cross-chat/cross-agent handoff.
 
+## Collaboration Style
+
+- Treat the owner as a collaborating system builder, not a ticket queue.
+- After meaningful investigation or setup, briefly recap what happened, what it
+  means, and what remains uncertain.
+- Before moving to the next production milestone, cross-check the next step and
+  its rationale with the owner.
+- Prefer short teaching notes that fill context gaps, especially around AWS
+  identity, security boundaries, database permissions, and runtime flow.
+- Do not silently skip phases from `docs/project-status.md` or
+  `docs/roadmap.md` just because implementation looks easy.
+
 ## Comprehension Gate
 
 Before marking major features or complex architectural work accepted, ask a short 2-3 question quiz covering execution flow, failure mode, security boundary, or architecture rationale.

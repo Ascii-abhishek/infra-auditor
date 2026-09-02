@@ -52,3 +52,33 @@ rds_superuser           false
 ```
 
 Also verify the role cannot select from application tables. Do not run broad application table queries through the auditor.
+
+## 2026-09-02 Boundary Check Result
+
+The live auditor role was checked using fixed catalog queries only; no
+application table rows were read.
+
+Both configured instances showed:
+
+- login role `prj_rl_rds_auditor_prod`,
+- connection limit `2`,
+- `default_transaction_read_only=on`,
+- active `transaction_read_only=on`,
+- `statement_timeout=20s`,
+- `lock_timeout=2s`,
+- `idle_in_transaction_session_timeout=1min`,
+- `idle_session_timeout=10min`,
+- membership in `pg_read_all_settings` and `pg_read_all_stats`,
+- no membership in `pg_monitor`, `pg_stat_scan_tables`, `pg_read_all_data`,
+  `pg_write_all_data`, `pg_signal_backend`, or `rds_superuser`,
+- no database-level `CREATE` privilege on checked databases.
+
+The auditor cannot connect to `unified_db_live` on `udb` or `raptor_db` on
+`raptor-catalog`. All other non-template databases were connectable.
+
+No application table privileges were observed. On `raptor-catalog`, the only
+selectable non-system relations found were extension-owned
+`pg_stat_statements` views in `public` on `datalyze_db`, `ptm_flow_prod`, and
+`raptor_catalog`. The current V0.1 collector does not read those views; future
+query/stat collectors must follow the query-text minimization boundary before
+using `pg_stat_statements`.
