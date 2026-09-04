@@ -1,6 +1,6 @@
 """Read-only AWS RDS discovery."""
 
-from infra_auditor.collectors.aws.client import RDSDescribeClient
+from infra_auditor.collectors.aws.client import RDSClient
 from infra_auditor.collectors.aws.models import RDSInstance, rds_instance_from_boto_response
 from infra_auditor.config import InstanceConfig
 from infra_auditor.exceptions import AWSDiscoveryError
@@ -9,7 +9,7 @@ from infra_auditor.exceptions import AWSDiscoveryError
 class RDSDiscovery:
     """Discover metadata for configured RDS DB instances."""
 
-    def __init__(self, client: RDSDescribeClient) -> None:
+    def __init__(self, client: RDSClient) -> None:
         self._client = client
 
     def describe_instance(self, *, alias: str, config: InstanceConfig, region: str) -> RDSInstance:

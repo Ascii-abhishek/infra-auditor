@@ -27,3 +27,7 @@ class CollectorQueryError(InfraAuditorError):
 
 class SnapshotValidationError(InfraAuditorError):
     """Raised when a snapshot cannot be validated or persisted."""
+
+
+class SnapshotReadError(InfraAuditorError):
+    """Raised when a stored snapshot cannot be listed, read, or parsed."""

@@ -1,0 +1,120 @@
+<div class="page-header">
+  <div>
+    <h1>Reports</h1>
+    <div class="header-meta">{{ selected_service_label }} · {{ settings.environment }} · {{ settings.aws_region }}</div>
+  </div>
+</div>
+
+{% include "partials/controls.html" %}
+
+{% if fleet_errors %}
+  <div class="alert alert-warning py-2">
+    {% for alias, message in fleet_errors.items() %}
+      <div><strong>{{ alias }}</strong>: {{ message }}</div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if fleet_report %}
+  <section class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-label">Instances</div>
+      <div class="metric-value">{{ fleet_report.instance_count }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Findings</div>
+      <div class="metric-value">{{ fleet_report.total_findings }}</div>
+      <div class="metric-note">
+        C{{ fleet_report.severity_counts.critical }}
+        H{{ fleet_report.severity_counts.high }}
+        M{{ fleet_report.severity_counts.medium }}
+        L{{ fleet_report.severity_counts.low }}
+      </div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">High</div>
+      <div class="metric-value">{{ fleet_report.severity_counts.high }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Medium</div>
+      <div class="metric-value">{{ fleet_report.severity_counts.medium }}</div>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">Instance Summary</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>Instance</th>
+            <th>Status</th>
+            <th>Findings</th>
+            <th>Public</th>
+            <th>Storage Min</th>
+            <th>CPU Max</th>
+            <th>Maintenance</th>
+            <th>Recommendations</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for snapshot_report in fleet_report.snapshots %}
+            {% for instance in snapshot_report.instances %}
+              <tr>
+                <td>
+                  <a href="/?section=rds&service={{ selected_service }}&instance={{ instance.alias }}">
+                    {{ instance.alias }}
+                  </a>
+                  <div class="table-subtext">{{ snapshot_report.started_at | dt }}</div>
+                </td>
+                <td><span class="status-chip status-{{ instance.status.value | lower }}">{{ instance.status.value }}</span></td>
+                <td>
+                  <strong>{{ instance.severity_counts.total }}</strong>
+                  <div class="table-subtext">
+                    C{{ instance.severity_counts.critical }}
+                    H{{ instance.severity_counts.high }}
+                    M{{ instance.severity_counts.medium }}
+                    L{{ instance.severity_counts.low }}
+                  </div>
+                </td>
+                <td>{{ yn(instance.network.publicly_accessible) }}</td>
+                <td>{{ num(instance.metrics.free_storage_minimum_gib, " GiB") }}</td>
+                <td>{{ num(instance.metrics.cpu_maximum_percent, "%") }}</td>
+                <td>{{ instance.rds_operations.pending_maintenance_count }}</td>
+                <td>{{ instance.rds_operations.recommendation_count }}</td>
+              </tr>
+            {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">Filtered Findings</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Severity</th><th>Rule</th><th>Instance</th><th>Finding</th></tr>
+        </thead>
+        <tbody>
+          {% for item in fleet_findings %}
+            <tr>
+              <td><span class="badge severity-{{ item.finding.severity.value | lower }}">{{ item.finding.severity.value }}</span></td>
+              <td><a href="/?section=rds&service={{ selected_service }}&instance={{ item.instance_alias }}">{{ item.finding.rule_id }}</a></td>
+              <td>{{ item.instance_alias }}</td>
+              <td>
+                <div class="fw-semibold">{{ item.finding.title }}</div>
+                <div class="table-subtext">{{ item.finding.summary }}</div>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="table-subtext">No findings match the current filters.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% else %}
+  <div class="empty-state">No fleet report loaded.</div>
+{% endif %}

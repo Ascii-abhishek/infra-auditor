@@ -18,6 +18,38 @@ query_database(sql)
 
 Future live checks must use audited server-owned query templates such as `run_live_check(check_id="connection_details", instance="raptor-catalog", arguments={...})`.
 
+## MCP Boundary
+
+The base MCP server is local. Most tools are read-only over approved stored
+audit data:
+
+```bash
+uv run infra-auditor mcp
+```
+
+Allowed MCP tools may read only approved audit artifacts:
+
+- configured instance summaries without secret IDs,
+- full snapshot object listings for configured aliases,
+- latest deterministic snapshot/fleet reports,
+- filtered deterministic finding summaries,
+- split raw artifact listings for approved service/subservice boundaries,
+- latest split raw artifacts for approved service/subservice boundaries.
+
+The only live MCP entrypoints are `sync_latest_audit_data` and
+`sync_today_audit_data`. They may call the existing read-only collector workflow
+for configured aliases and write immutable audit artifacts to S3. The today
+mode may first list the latest approved full snapshot for a configured alias and
+current split artifact prefixes for that alias, and skip collection only when
+the newest full snapshot and all current split artifacts are already under the
+current UTC day. The tools must not accept AWS action names, SQL text, secret
+IDs, raw S3 keys, or remediation instructions.
+
+MCP tools must derive S3 prefixes from runtime settings, configured instance
+aliases, and hard-coded approved service/subservice choices. Do not expose an MCP
+tool that accepts arbitrary S3 keys, S3 prefixes, AWS service/action names,
+SQL strings, shell commands, Secrets Manager secret IDs, or remediation actions.
+
 ## No Automatic Remediation In V1
 
 The system may recommend actions, but V1 must not automatically create/drop indexes, alter roles, grant/revoke permissions, alter tables/systems/databases, terminate sessions, reboot or resize RDS, change parameter groups, modify security groups, or apply RDS recommendations.
@@ -37,6 +69,18 @@ Current intended grants:
 pg_read_all_settings
 pg_read_all_stats
 ```
+
+Current PostgreSQL catalog collection uses fixed queries against:
+
+```text
+pg_catalog.pg_database
+pg_catalog.pg_stat_activity
+pg_catalog.pg_roles
+pg_catalog.pg_auth_members
+```
+
+Do not collect from `pg_authid` because it is password-bearing; use `pg_roles`
+for role attributes.
 
 Explicitly not allowed:
 
@@ -60,6 +104,49 @@ Collectors must not intentionally retrieve application row data. Use catalog met
 V1 should not collect unrestricted `pg_stat_activity.query` text. Prefer query identifiers and operational metadata. Any future query text support needs explicit justification, redaction, length limits, PII/secret protection, and runtime-flow documentation.
 
 `pg_stat_statements` query text is also potentially sensitive.
+
+## AWS Read-Only Evidence Boundary
+
+Current AWS collection is read-only and may call:
+
+```text
+rds:DescribeDBInstances
+ec2:DescribeSecurityGroups
+cloudwatch:GetMetricData
+rds:DescribePendingMaintenanceActions
+rds:DescribeDBRecommendations
+rds:DescribeDBParameters
+secretsmanager:GetSecretValue
+s3:PutObject
+```
+
+The collector must not call AWS mutating APIs such as `ModifyDBInstance`,
+`ModifyDBParameterGroup`, `AuthorizeSecurityGroupIngress`,
+`RevokeSecurityGroupIngress`, or `ApplyPendingMaintenanceAction`.
+
+Snapshot writers may use `s3:PutObject` only for approved immutable audit
+artifact prefixes such as `raw/snapshots/*`.
+
+## Report Console Boundary
+
+The local FastAPI report console is an internal control surface over snapshots
+and reports. It may list/read raw S3 snapshots for reporting and may trigger the
+existing read-only collection workflow, which only writes new snapshot objects
+to S3.
+
+It must not expose generic SQL, arbitrary AWS API calls, automatic remediation,
+secret reads beyond the collector workflow, or application table data.
+
+Bind the local UI to `127.0.0.1` by default. Exposing it beyond localhost needs
+a separate authentication and network-access design.
+
+The Chat view is currently inert. Future LLM chat must use approved MCP/data
+tools over snapshots and reports, not live generic SQL, shell command bridges,
+or arbitrary AWS API execution.
+
+The async `/view` route is a read/report rendering boundary over the same S3
+snapshots and collector actions. It must not become a generic live execution
+endpoint.
 
 ## Secret Handling
 

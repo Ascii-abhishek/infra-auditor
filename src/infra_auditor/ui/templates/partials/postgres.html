@@ -1,0 +1,113 @@
+<div class="page-header">
+  <div>
+    <h1>Database (PG)</h1>
+    <div class="header-meta">{{ selected_instance }} · {{ selected_subservice_label }} · {{ selected_database }} · {{ selected_date or "latest" }} · {{ selected_timestamp or "latest" }}</div>
+  </div>
+</div>
+
+{% include "partials/controls.html" %}
+
+{% if report and instance_report and instance_snapshot %}
+  <section class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-label">Databases</div>
+      <div class="metric-value">{{ instance_report.postgres.database_count }}</div>
+      <div class="metric-note">Application {{ instance_report.postgres.application_database_count }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Roles</div>
+      <div class="metric-value">{{ instance_report.postgres.role_count or 0 }}</div>
+      <div class="metric-note">Login {{ instance_report.postgres.login_role_count or 0 }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Connections</div>
+      <div class="metric-value">{{ instance_report.postgres.total_connections or 0 }}</div>
+      <div class="metric-note">Idle txn {{ instance_report.postgres.idle_in_transaction_connections or 0 }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Database Findings</div>
+      <div class="metric-value">{{ postgres_findings|length }}</div>
+      <div class="metric-note">Missing app name {{ instance_report.postgres.missing_application_name_connections or 0 }}</div>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">Database Inventory</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Database</th><th>Kind</th><th>Connections</th><th>Template</th><th>Eligible</th></tr>
+        </thead>
+        <tbody>
+          {% for database in instance_snapshot.databases if selected_database == "all" or database.name == selected_database %}
+            <tr>
+              <td>{{ database.name }}</td>
+              <td>{{ database.kind.value }}</td>
+              <td>{{ yn(database.allow_connections) }}</td>
+              <td>{{ yn(database.is_template) }}</td>
+              <td>{{ yn(database.connection_eligible) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="table-subtext">No databases in this selection.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">Connection Groups</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Database</th><th>Role</th><th>Application</th><th>Client</th><th>State</th><th>Wait</th><th>Count</th><th>Oldest Txn</th></tr>
+        </thead>
+        <tbody>
+          {% for group in postgres_activity_groups %}
+            <tr>
+              <td>{{ group.database_name or "unknown" }}</td>
+              <td>{{ group.role_name or "unknown" }}</td>
+              <td>{{ group.application_name or "missing" }}</td>
+              <td>{{ group.client_address or "unknown" }}</td>
+              <td>{{ group.state or "unknown" }}</td>
+              <td>{{ group.wait_event_type or "" }}</td>
+              <td>{{ group.connection_count }}</td>
+              <td>{{ num(group.oldest_transaction_age_seconds, " s") }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="table-subtext">No activity groups in this selection.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section-block">
+    <div class="section-title">Database Findings</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Severity</th><th>Rule</th><th>Resource</th><th>Finding</th><th>Recommendation</th></tr>
+        </thead>
+        <tbody>
+          {% for finding in postgres_findings %}
+            <tr>
+              <td><span class="badge severity-{{ finding.severity.value | lower }}">{{ finding.severity.value }}</span></td>
+              <td>{{ finding.rule_id }}</td>
+              <td>{{ finding.resource }}</td>
+              <td>
+                <div class="fw-semibold">{{ finding.title }}</div>
+                <div class="table-subtext">{{ finding.summary }}</div>
+              </td>
+              <td>{{ finding.recommendation or "" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="table-subtext">No database findings in the selected snapshot.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% elif not error %}
+  <div class="empty-state">No database snapshot loaded.</div>
+{% endif %}

@@ -2,11 +2,11 @@
 
 ## Purpose
 
-`infra-auditor` is a deterministic infrastructure/database auditor. V1 audits AWS RDS PostgreSQL and produces normalized evidence snapshots that deterministic rules and later LLM analysts can consume safely.
+`infra-auditor` is a deterministic infrastructure/database auditor. V1 audits AWS RDS PostgreSQL and produces normalized evidence snapshots that deterministic rules, constrained MCP tools, and later LLM analysts can consume safely.
 
 ## Current Phase
 
-V0.1 bootstrap. The repo has a small read-only collection path: settings, validated resource registry, RDS discovery, Secrets Manager credential boundary, PostgreSQL database inventory, and local JSON snapshots.
+V0.1 bootstrap. The repo has a read-only collection path: settings, validated resource registry, RDS discovery, security group ingress, CloudWatch RDS metric summaries, RDS operations evidence, Secrets Manager credential boundary, PostgreSQL database inventory, PostgreSQL activity summaries, PostgreSQL role security evidence, initial deterministic findings, S3 JSON snapshots, service/subservice raw S3 artifacts, deterministic snapshot/fleet report summaries, a local FastAPI report console, and base MCP tools over approved snapshot/report data with controlled latest/today-data sync.
 
 ## Read First
 
@@ -65,7 +65,8 @@ Use `uv run ruff format .` when formatting is needed.
 
 ## Secrets And Config
 
-- Runtime settings use `INFRA_AUDITOR_` environment variables and optional local `.env`.
+- Runtime settings use `SYS_ENV`, `INFRA_AUDITOR_` environment variables, and optional local `.env`.
+- `SYS_ENV` may be only `dev` or `prod`; when unset it defaults to `dev`.
 - `.env` is local-only and gitignored.
 - Human-managed YAML says what to audit; AWS discovery says what resources currently look like.
 - YAML must not contain passwords, endpoints, AWS account IDs, VPC IDs, subnet IDs, security group IDs, allocated storage, instance class, or engine versions.

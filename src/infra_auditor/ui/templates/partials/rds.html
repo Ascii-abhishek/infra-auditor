@@ -1,0 +1,258 @@
+<div class="page-header">
+  <div>
+    <h1>RDS Audit</h1>
+    <div class="header-meta">{{ selected_instance }} · {{ selected_subservice_label }} · {{ selected_date or "latest" }} · {{ selected_timestamp or "latest" }}</div>
+  </div>
+</div>
+
+{% include "partials/controls.html" %}
+
+{% if report and instance_report %}
+  <section class="metric-grid">
+    <div class="metric-card">
+      <div class="metric-label">Status</div>
+      <div class="metric-value">
+        <span class="status-chip status-{{ instance_report.status.value | lower }}">{{ instance_report.status.value }}</span>
+      </div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Findings</div>
+      <div class="metric-value">{{ rds_findings|length }}</div>
+      <div class="metric-note">
+        C{{ instance_report.severity_counts.critical }}
+        H{{ instance_report.severity_counts.high }}
+        M{{ instance_report.severity_counts.medium }}
+        L{{ instance_report.severity_counts.low }}
+      </div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Public RDS</div>
+      <div class="metric-value">{{ yn(instance_report.network.publicly_accessible) }}</div>
+      <div class="metric-note">DB-port ingress {{ yn(instance_report.network.public_database_port_ingress) }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Free Storage Min</div>
+      <div class="metric-value">{{ num(instance_report.metrics.free_storage_minimum_gib, " GiB") }}</div>
+      <div class="metric-note">{{ num(instance_report.metrics.free_storage_minimum_percent, "%") }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">CPU Max</div>
+      <div class="metric-value">{{ num(instance_report.metrics.cpu_maximum_percent, "%") }}</div>
+      <div class="metric-note">Avg {{ num(instance_report.metrics.cpu_average_percent, "%") }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Connections</div>
+      <div class="metric-value">{{ num(instance_report.metrics.database_connections_latest, "") }}</div>
+      <div class="metric-note">Avg {{ num(instance_report.metrics.database_connections_average, "") }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Memory Min</div>
+      <div class="metric-value">{{ num(instance_report.metrics.freeable_memory_minimum_gib, " GiB") }}</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">RDS Recommendations</div>
+      <div class="metric-value">{{ instance_report.rds_operations.recommendation_count }}</div>
+      <div class="metric-note">Maintenance {{ instance_report.rds_operations.pending_maintenance_count }}</div>
+    </div>
+  </section>
+
+  {% if selected_subservice in ["instance", "operations"] %}
+  <section class="split-grid">
+    <div class="section-block">
+      <div class="section-title">Instance</div>
+      <table class="table table-sm align-middle">
+        <tbody>
+          <tr><th>Run</th><td>{{ report.run_id }}</td></tr>
+          <tr><th>Started</th><td>{{ report.started_at | dt }}</td></tr>
+          <tr><th>Engine</th><td>{{ instance_report.engine or "unknown" }} {{ instance_report.engine_version or "" }}</td></tr>
+          <tr><th>Class</th><td>{{ instance_report.instance_class or "unknown" }}</td></tr>
+          <tr><th>VPC</th><td>{{ instance_report.network.vpc_id or "unknown" }}</td></tr>
+          <tr><th>Security groups</th><td>{{ instance_report.network.security_group_count }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-block">
+      <div class="section-title">Operations</div>
+      <table class="table table-sm align-middle">
+        <tbody>
+          <tr><th>Pending maintenance</th><td>{{ instance_report.rds_operations.pending_maintenance_count }}</td></tr>
+          <tr><th>Recommendations</th><td>{{ instance_report.rds_operations.recommendation_count }}</td></tr>
+          <tr><th>Parameter groups</th><td>{{ instance_report.rds_operations.parameter_group_count }}</td></tr>
+          <tr><th>Parameters collected</th><td>{{ instance_report.rds_operations.parameter_count }}</td></tr>
+          <tr><th>Read latency max</th><td>{{ num(instance_report.metrics.read_latency_maximum_ms, " ms") }}</td></tr>
+          <tr><th>Write latency max</th><td>{{ num(instance_report.metrics.write_latency_maximum_ms, " ms") }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if selected_subservice == "operations" and instance_snapshot.rds_operations %}
+    <section class="section-block">
+      <div class="section-title">Pending Maintenance</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr><th>Action</th><th>Status</th><th>Current Apply</th><th>Auto Applied</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for action in instance_snapshot.rds_operations.pending_maintenance %}
+              <tr>
+                <td>{{ action.action or "unknown" }}</td>
+                <td>{{ action.opt_in_status or "unknown" }}</td>
+                <td>{{ action.current_apply_at | dt if action.current_apply_at else "" }}</td>
+                <td>{{ action.auto_applied_after | dt if action.auto_applied_after else "" }}</td>
+                <td>{{ action.description or "" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="table-subtext">No pending maintenance in this snapshot.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-title">RDS Recommendations</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr><th>Severity</th><th>Status</th><th>Category</th><th>Recommendation</th></tr>
+          </thead>
+          <tbody>
+            {% for recommendation in instance_snapshot.rds_operations.recommendations %}
+              <tr>
+                <td>{{ recommendation.severity or "unknown" }}</td>
+                <td>{{ recommendation.status or "unknown" }}</td>
+                <td>{{ recommendation.category or "" }}</td>
+                <td>
+                  <div class="fw-semibold">{{ recommendation.recommendation or recommendation.detection or recommendation.type_id or recommendation.recommendation_id }}</div>
+                  <div class="table-subtext">{{ recommendation.reason or recommendation.impact or recommendation.description or "" }}</div>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="table-subtext">No RDS recommendations in this snapshot.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if selected_subservice == "ec2-security-groups" %}
+    {% if instance_snapshot and instance_snapshot.aws_security_groups %}
+      <section class="section-block">
+        <div class="section-title">Attached Security Group Ingress</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr><th>Group</th><th>Protocol</th><th>Ports</th><th>Peers</th><th>DB Port</th><th>Public</th></tr>
+            </thead>
+            <tbody>
+              {% for group in instance_snapshot.aws_security_groups.security_groups %}
+                {% for rule in group.ingress_rules %}
+                  <tr>
+                    <td>
+                      {{ group.group_id }}
+                      <div class="table-subtext">{{ group.group_name or "" }}</div>
+                    </td>
+                    <td>{{ rule.ip_protocol }}</td>
+                    <td>{{ rule.from_port or "all" }} - {{ rule.to_port or "all" }}</td>
+                    <td>
+                      {% for peer in rule.peers %}
+                        <div>{{ peer.type.value }}: {{ peer.value }}</div>
+                      {% else %}
+                        <span class="table-subtext">none</span>
+                      {% endfor %}
+                    </td>
+                    <td>{{ yn(rule.covers_database_port) }}</td>
+                    <td>{{ yn(rule.public_ipv4 or rule.public_ipv6) }}</td>
+                  </tr>
+                {% else %}
+                  <tr>
+                    <td>
+                      {{ group.group_id }}
+                      <div class="table-subtext">{{ group.group_name or "" }}</div>
+                    </td>
+                    <td colspan="5" class="table-subtext">No ingress rules.</td>
+                  </tr>
+                {% endfor %}
+              {% else %}
+                <tr><td colspan="6" class="table-subtext">No security groups in this snapshot.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% else %}
+      <div class="empty-state">No attached security group evidence loaded.</div>
+    {% endif %}
+  {% endif %}
+
+  {% if selected_subservice == "cloudwatch-rds-metrics" %}
+    {% if instance_snapshot and instance_snapshot.cloudwatch_metrics %}
+      <section class="section-block">
+        <div class="section-title">CloudWatch RDS Metric Summaries</div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr><th>Metric</th><th>Datapoints</th><th>Minimum</th><th>Average</th><th>Maximum</th><th>Latest</th></tr>
+            </thead>
+            <tbody>
+              {% for metric in instance_snapshot.cloudwatch_metrics.metrics %}
+                <tr>
+                  <td>
+                    {{ metric.metric_name }}
+                    <div class="table-subtext">{{ metric.query_id }}</div>
+                  </td>
+                  <td>{{ metric.datapoint_count }}</td>
+                  <td>{{ num(metric.minimum, "") }}</td>
+                  <td>{{ num(metric.average, "") }}</td>
+                  <td>{{ num(metric.maximum, "") }}</td>
+                  <td>
+                    {{ num(metric.latest, "") }}
+                    <div class="table-subtext">{{ metric.latest_timestamp or "" }}</div>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="6" class="table-subtext">No CloudWatch metrics in this snapshot.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% else %}
+      <div class="empty-state">No CloudWatch RDS metric evidence loaded.</div>
+    {% endif %}
+  {% endif %}
+
+  <section class="section-block">
+    <div class="section-title">RDS Findings</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr><th>Severity</th><th>Rule</th><th>Resource</th><th>Finding</th><th>Recommendation</th></tr>
+        </thead>
+        <tbody>
+          {% for finding in rds_findings %}
+            <tr>
+              <td><span class="badge severity-{{ finding.severity.value | lower }}">{{ finding.severity.value }}</span></td>
+              <td>{{ finding.rule_id }}</td>
+              <td>{{ finding.resource }}</td>
+              <td>
+                <div class="fw-semibold">{{ finding.title }}</div>
+                <div class="table-subtext">{{ finding.summary }}</div>
+              </td>
+              <td>{{ finding.recommendation or "" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="table-subtext">No RDS findings in the selected snapshot.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% elif not error %}
+  <div class="empty-state">No RDS snapshot loaded.</div>
+{% endif %}

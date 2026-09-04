@@ -1,0 +1,128 @@
+<div class="control-strip">
+  <form method="get" action="/" class="control-form">
+    <input type="hidden" name="section" value="{{ section }}">
+    <input type="hidden" name="service" value="{{ selected_service }}">
+
+    {% if section in ["rds", "postgres", "raw"] %}
+      <label class="control-field">
+        <span>Server</span>
+        <select class="form-select form-select-sm" name="instance">
+          {% for alias in aliases %}
+            <option value="{{ alias }}" {% if alias == selected_instance %}selected{% endif %}>{{ alias }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    {% if subservice_options %}
+      <label class="control-field">
+        <span>Subservice</span>
+        <select class="form-select form-select-sm" name="subservice">
+          {% for option in subservice_options %}
+            <option value="{{ option.id }}" {% if option.id == selected_subservice %}selected{% endif %}>{{ option.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    {% if date_options %}
+      <label class="control-field">
+        <span>Date</span>
+        <select class="form-select form-select-sm" name="date">
+          {% for option in date_options %}
+            <option value="{{ option }}" {% if option == selected_date %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    {% if timestamp_options %}
+      <label class="control-field">
+        <span>Timestamp</span>
+        <select class="form-select form-select-sm" name="timestamp">
+          {% for option in timestamp_options %}
+            <option value="{{ option }}" {% if option == selected_timestamp %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    {% if section == "postgres" %}
+      <label class="control-field">
+        <span>Database</span>
+        <select class="form-select form-select-sm" name="database">
+          <option value="all" {% if selected_database == "all" %}selected{% endif %}>All databases</option>
+          {% for database_name in database_names %}
+            <option value="{{ database_name }}" {% if database_name == selected_database %}selected{% endif %}>{{ database_name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    {% if section == "reports" %}
+      <label class="control-field">
+        <span>Severity</span>
+        <select class="form-select form-select-sm" name="severity">
+          {% for option in severity_options %}
+            <option value="{{ option }}" {% if option == selected_severity %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="control-field">
+        <span>Rule</span>
+        <select class="form-select form-select-sm" name="rule">
+          <option value="all" {% if selected_rule == "all" %}selected{% endif %}>all</option>
+          {% for rule_id in rule_options %}
+            <option value="{{ rule_id }}" {% if rule_id == selected_rule %}selected{% endif %}>{{ rule_id }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+
+    <button class="btn btn-sm btn-outline-secondary" type="submit">
+      <i class="bi bi-check2"></i>
+      <span>Apply</span>
+    </button>
+  </form>
+
+  <div class="control-actions">
+    {% if section in ["rds", "postgres", "raw"] %}
+      <form method="post" action="/sync-jobs?mode=latest&target=instance&service={{ selected_service }}&section={{ section }}&instance={{ selected_instance }}&database={{ selected_database | urlencode }}&subservice={{ selected_subservice | urlencode }}" data-sync-form>
+        <button class="btn btn-sm btn-primary" type="submit">
+          <i class="bi bi-arrow-clockwise"></i>
+          <span>Sync this</span>
+        </button>
+      </form>
+    {% endif %}
+
+    {% if section in ["rds", "postgres", "reports", "raw"] %}
+      <form method="post" action="/sync-jobs?mode=latest&target=all&service={{ selected_service }}&section={{ section }}&instance={{ selected_instance }}&subservice={{ selected_subservice | urlencode }}" data-sync-form>
+        <button class="btn btn-sm btn-primary" type="submit">
+          <i class="bi bi-collection"></i>
+          <span>Sync all</span>
+        </button>
+      </form>
+      <form method="post" action="/sync-jobs?mode=today&target=all&service={{ selected_service }}&section={{ section }}&instance={{ selected_instance }}&subservice={{ selected_subservice | urlencode }}" data-sync-form>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">
+          <i class="bi bi-calendar-check"></i>
+          <span>Sync today</span>
+        </button>
+      </form>
+    {% endif %}
+
+    {% if section == "reports" %}
+      <a class="btn btn-sm btn-outline-secondary" href="/exports/fleet.md?service={{ selected_service }}">
+        <i class="bi bi-markdown"></i>
+        <span>Markdown</span>
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="/exports/fleet.json?service={{ selected_service }}">
+        <i class="bi bi-filetype-json"></i>
+        <span>JSON</span>
+      </a>
+      <button class="btn btn-sm btn-outline-secondary" type="button" disabled>
+        <i class="bi bi-envelope"></i>
+        <span>Email report</span>
+      </button>
+    {% endif %}
+  </div>
+</div>

@@ -8,33 +8,84 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
 
 - `uv run infra-auditor config validate` validates settings and `config/environments.example.yaml`.
 - `uv run infra-auditor discover aws --instance <alias>` can call read-only RDS discovery when AWS credentials/permissions exist.
-- `uv run infra-auditor collect --instance <alias>` builds a minimal snapshot path: RDS discovery, Secrets Manager credential resolution, PostgreSQL database inventory, and local JSON persistence.
+- `uv run infra-auditor collect --instance <alias>` builds a minimal snapshot path:
+  RDS discovery, AWS security group ingress, CloudWatch RDS metric summaries,
+  RDS operations/configuration evidence, Secrets Manager credential resolution,
+  PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
+  security evidence, deterministic findings, and S3 JSON persistence.
 - Unit tests use fakes and do not touch production AWS/RDS.
 - The PostgreSQL auditor roles/users have been created on both target RDS PostgreSQL instances, according to owner handoff.
 - Local AWS authentication is ready to use IAM Identity Center or other temporary credentials through boto3's standard provider chain. `INFRA_AUDITOR_AWS_PROFILE` remains optional for local development and must not be required in production.
 - Local `.env` exists outside git with `INFRA_AUDITOR_AWS_PROFILE=infra-auditor`.
 - The `infra-auditor` local AWS profile is logged in and can call STS, RDS discovery, and Secrets Manager for both configured instances.
-- Live V0.1 collection now succeeds for both `udb` and `raptor-catalog`, including PostgreSQL database inventory and local JSON snapshot persistence.
+- Live V0.1 collection succeeds for both `raptor-catalog` and `udb`, including
+  AWS discovery, attached security group ingress, CloudWatch RDS metric
+  summaries, RDS operations evidence, Secrets Manager credential resolution,
+  PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
+  security, deterministic findings, and S3 JSON snapshot persistence.
+- Collection now writes the full compatibility snapshot under
+  `raw/snapshots/.../service=rds-postgres/...` plus service/subservice raw
+  artifacts under `raw/snapshots/artifact_schema=...` for RDS, PostgreSQL, and
+  deterministic-finding boundaries. Current RDS-adjacent EC2 security group and
+  CloudWatch RDS metric evidence are RDS subservices.
 - The PostgreSQL auditor permission boundary has been checked with fixed catalog queries and mostly matches the intended read-only posture.
+- `SYS_ENV` now defaults to `dev`, accepts only `dev` or `prod`, and derives snapshot bucket names as `infra-audit-rl-<SYS_ENV>`.
+- PostgreSQL security rules `SEC002` and `SEC003` are implemented and embedded
+  in snapshots.
+- AWS/RDS rules for public exposure, open RDS recommendations, pending
+  maintenance, pending parameter apply status, CPU pressure, low free storage,
+  and low freeable memory are implemented.
+- PostgreSQL activity rules for idle-in-transaction sessions, long
+  transactions, concentrated connection ownership, and missing
+  `application_name` are implemented.
+- Deterministic snapshot and fleet report summaries are implemented over raw
+  snapshots.
+- `uv run infra-auditor serve` starts a local FastAPI/Bootstrap report console using
+  `INFRA_AUDITOR_WEB_HOST` and `INFRA_AUDITOR_WEB_PORT`, defaulting to
+  `127.0.0.1:8008`.
+- `./run.sh` is available as the local central runner: it checks Python/uv,
+  syncs dependencies, loads `.env`, and starts the report console.
+- The report console uses a navigation-only left pane for RDS, Database (PG),
+  planned AWS, planned EC2, Elasticsearch, Bitbucket, Reports, Raw Data, and a
+  fixed Chat entry. Runtime selectors and actions live in the right pane.
+- Service views expose right-pane selectors for subservice, date, and timestamp,
+  defaulting to the latest snapshot object.
+- The visible report console sync actions run as background jobs with per-alias
+  progress polling. `Sync today` skips configured aliases only when they already
+  have a full snapshot and all current split artifacts for the current UTC day.
+- The report console now renders a lightweight shell first and loads S3-backed
+  content through `/view`, so slow AWS/S3 token or network work shows behind a
+  visible loader rather than delaying the whole page.
+- `uv run infra-auditor mcp` starts a local stdio MCP server with tools over
+  configured instances, latest reports, finding summaries, snapshot listings,
+  latest approved split artifacts, and controlled latest/today-data sync.
 
 ## What Is Partially Implemented
 
-- Snapshot model contains run metadata, RDS metadata, database inventory, collector statuses, and collection gaps.
+- Snapshot model contains run metadata, RDS metadata, AWS network/metric/ops
+  evidence, database inventory, PostgreSQL activity evidence, PostgreSQL role
+  security evidence, collector statuses, collection gaps, and findings.
+- Split artifact model contains source run metadata, service/subservice and
+  collector-boundary metadata, boundary status, and only the evidence owned by
+  that RDS, PostgreSQL, or deterministic-finding split.
+- Report model contains per-snapshot and per-service fleet summaries: severity
+  counts, rule counts, top findings, collector statuses, network exposure
+  summary, selected CloudWatch metric summaries, RDS operations summary, and
+  PostgreSQL inventory/activity/role summary.
 - Secrets Manager boundary validates `username` and `password`; live secrets now use the credential-only schema and were verified without printing values.
-- PostgreSQL connection factory uses TLS and context managers, but only database inventory is collected.
+- PostgreSQL connection factory uses TLS and context managers.
 
 ## What Is Not Implemented
 
-- Deterministic rule engine.
 - Findings lifecycle/history.
-- CloudWatch metrics/logs collectors.
-- RDS recommendations collector.
 - Performance Insights/Database Insights collectors.
-- S3/Parquet/Glue/Athena storage.
-- SES reports.
+- CloudWatch Logs collectors.
+- Parquet/Glue/Athena storage.
+- SES reports and email send actions.
 - Docker/ECS/EventBridge deployment.
 - Terraform.
-- Pydantic AI, LLM analyst, MCP server, or OpenAI/Anthropic SDKs.
+- Pydantic AI, LLM analyst, OpenAI/Anthropic SDKs, hosted MCP, or MCP-backed
+  chat.
 - Automatic remediation.
 - AWS permission sets, IAM roles, Secrets Manager secrets, S3 buckets, ECS tasks, EventBridge schedules, and CI/CD identities are not created by this repository.
 
@@ -42,25 +93,40 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
 
 - Raptor Catalog has effective role paths to `rds_superuser`, including `usr_rl_abhishek_pathak -> raptorsupplies24 -> rds_superuser` and `role_cleanup -> raptorsupplies24 -> rds_superuser`.
 - Login-to-login inheritance exists and should be reviewed.
-- `PubliclyAccessible=true` exists on both RDS instances, but this must be evaluated with actual ingress rules before severity is assigned.
+- Latest deterministic `raptor-catalog` run produced 21 findings:
+  `CFG009=1`, `OPS001=1`, `OPS003=1`, `OPS005=1`, `OPS012=1`, `OPS013=4`,
+  `OPS015=1`, `SEC002=3`, and `SEC003=8`.
+- Latest deterministic `udb` run produced 12 findings:
+  `CFG009=1`, `OPS012=1`, `OPS013=5`, `OPS015=1`, `SEC002=1`, and `SEC003=3`.
+- `PubliclyAccessible=true` exists on both RDS instances. The implemented
+  network collector now evaluates attached security group ingress successfully.
 - The auditor cannot connect to `unified_db_live` on `udb` or `raptor_db` on `raptor-catalog`; decide whether future collectors should require those databases.
 - On `raptor-catalog`, `pg_stat_statements` extension views are selectable in `datalyze_db`, `ptm_flow_prod`, and `raptor_catalog`. This is not application table access, but future query/stat collectors must not read query text without a documented minimization design.
 
 ## Open Decisions
 
-- S3 encryption mode and object layout remain deferred until after complete local AWS/PostgreSQL collection is validated.
-- No unresolved code changes are required before correcting the current secret JSON values.
+- Decide when the UI/report path should read split artifacts directly instead
+  of using the full compatibility snapshot.
+- Decide the first dedicated AWS account posture collector boundary
+  (credential report, IAM last-used, IAM Identity Center, or role/policy
+  inventory) before adding AWS/EC2 as live standalone UI domains.
+- Decide the first hosted/authenticated MCP and LLM-chat access design before
+  exposing MCP beyond local stdio.
 
 ## Blockers
 
-- No current blocker for the V0.1 local live collection path.
-- Future S3 persistence, broader collectors, deterministic rules, reports, and ECS/EventBridge deployment remain unimplemented.
+- No current blocker for read-only RDS PostgreSQL snapshot collection.
+- No current blocker for the local report console against existing S3 snapshots.
+- Parquet/Glue/Athena, Performance Insights, SES, and ECS/EventBridge
+  deployment remain unimplemented.
 
 ## Next Recommended Task
 
-Start the next session by reviewing the successful local snapshots and the
-permission-boundary notes, then discuss the S3 persistence design before any
-implementation.
+Run `Sync today` or `sync_today_audit_data` once. It will create the new clean
+`service=rds` split artifacts when the current UTC-day snapshot family is
+missing or outdated. Then confirm Raw Data can read
+`rds/cloudwatch-rds-metrics` and `rds/ec2-security-groups`, and design the LLM
+analyst boundary over latest reports/splits.
 
 ## Last Validation
 
@@ -104,6 +170,228 @@ implementation.
 - `raptor-catalog`: all non-template databases except `raptor_db` were connectable.
 - No application table privileges were observed. The only selectable non-system relations were extension-owned `pg_stat_statements` views on selected `raptor-catalog` databases.
 
+2026-09-03 S3 persistence implementation:
+
+- Reviewed successful local snapshots and permission-boundary notes.
+- Implemented `SYS_ENV` settings with allowed values `dev` and `prod`; unset
+  defaults to `dev`.
+- S3 snapshot bucket names derive from `SYS_ENV` as `infra-audit-rl-<SYS_ENV>`.
+- Replaced active local JSON persistence with S3 JSON persistence using
+  conditional `PutObject` and timestamp-based object names.
+- Live S3 access inspection from the current narrow local identity returned
+  `AccessDenied`, which is consistent with write-only permissions but means
+  bucket posture was not verified from this profile.
+- Live S3-backed collection succeeded for `udb` and wrote
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=udb/dt=2026-09-03/20260903T100426Z.json`.
+- Live S3-backed collection succeeded for `raptor-catalog` and wrote
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt=2026-09-03/20260903T100426Z.json`.
+- After the writes, the same identity still received `AccessDenied` for
+  `ListBucket` on `raw/snapshots/` and `HeadObject` on both written snapshots;
+  the observed runtime boundary is write-only from this profile.
+- Local validation passed: `uv run infra-auditor config validate`,
+  `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run mypy src`, and `uv run pytest` with 17 tests.
+
+2026-09-03 PostgreSQL security rules implementation:
+
+- Added fixed-query PostgreSQL role-security evidence collection from
+  `pg_roles` and `pg_auth_members`.
+- Embedded deterministic findings in each instance snapshot.
+- Implemented `SEC002` for login membership paths to `rds_superuser`.
+- Implemented `SEC003` for direct login-to-login role membership.
+- Refactored PostgreSQL collection to use one bootstrap database connection per
+  instance run for database inventory and role security, preserving the
+  connection-limit boundary.
+- First live `raptor-catalog` run failed on `rolvaliduntil = infinity`; the
+  role query now normalizes infinite timestamps to `null`.
+- Live S3-backed collection succeeded for `raptor-catalog` and wrote
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt=2026-09-03/20260903T105332Z.json`.
+- The successful `raptor-catalog` role-security evidence contained 59 roles and
+  41 membership edges; deterministic findings were 3 `SEC002` and 8 `SEC003`.
+- Live S3-backed collection for `udb` remained `PARTIAL_SUCCESS` because the
+  bootstrap PostgreSQL connection timed out; AWS discovery, secret resolution,
+  and S3 persistence still succeeded.
+- Local validation passed after the role-security change:
+  `uv run infra-auditor config validate`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run mypy src`, and `uv run pytest` with
+  23 tests.
+
+2026-09-03 AWS/RDS operational collector implementation:
+
+- Added read-only collectors for attached security group ingress, CloudWatch RDS
+  metric summaries, RDS pending maintenance, RDS recommendations, DB parameter
+  group parameters, and aggregated PostgreSQL activity metadata.
+- Activity evidence intentionally excludes `pg_stat_activity.query` text.
+- Added deterministic rules for `SEC001`, `CFG002`, `CFG009`, `OPS001`,
+  `OPS003`, `OPS005`, `OPS007`, `OPS008`, `OPS012`, `OPS013`, `OPS014`, and
+  `OPS015`.
+- Local validation passed: `uv run infra-auditor config validate`,
+  `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`,
+  and `uv run pytest` with 29 tests.
+- Live `raptor-catalog` collection wrote
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt=2026-09-03/20260903T114521Z.json`.
+- That live run was `PARTIAL_SUCCESS`: RDS discovery, Secrets Manager,
+  PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
+  security, deterministic rules, and S3 persistence succeeded; the new AWS
+  network/metric/ops collectors failed because the current identity lacks the
+  read-only AWS permissions listed in Blockers.
+- After the owner added the missing read-only AWS permissions and ran from the
+  whitelisted network, live S3-backed collection succeeded for both configured
+  instances.
+- `raptor-catalog` success snapshot:
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt=2026-09-03/20260903T115827Z.json`;
+  all collectors succeeded, 12 databases discovered, 22 findings.
+- `udb` success snapshot:
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=udb/dt=2026-09-03/20260903T115839Z.json`;
+  all collectors succeeded, 6 databases discovered, 12 findings.
+
+2026-09-03 report/UI implementation:
+
+- Added deterministic report models over raw snapshots, including severity
+  counts, rule counts, collector summaries, selected RDS metrics, RDS operations,
+  network exposure, PostgreSQL activity, and role/security inventory.
+- Added S3 snapshot read helpers for listing latest snapshots and validating
+  stored raw JSON as `AuditSnapshot`.
+- Added `uv run infra-auditor serve`, backed by FastAPI/Uvicorn and configured
+  through `INFRA_AUDITOR_WEB_HOST` and `INFRA_AUDITOR_WEB_PORT`; defaults are
+  `127.0.0.1:8008`.
+- Added a local Bootstrap dashboard with instance/snapshot selectors, report
+  summary, findings table, collector table, raw JSON viewer, and controlled
+  collect action.
+- Local validation passed: `uv run infra-auditor config validate`,
+  `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`,
+  and `uv run pytest` with 32 tests.
+- Live S3 read check from the current local identity returned `AccessDenied` for
+  `ListBucket`; add the documented S3 read permissions before the UI can load
+  existing snapshots.
+- The local UI launched successfully at `http://127.0.0.1:8008`; `/healthz`
+  returned `{"status":"ok"}` and `/` returned HTTP 200.
+
+2026-09-04 service-aware report console refactor:
+
+- Refactored the local UI into maintainable template/static assets under
+  `src/infra_auditor/ui/templates` and `src/infra_auditor/ui/static`.
+- Added a left-pane/right-pane report console with service selection, fleet
+  overview, instance detail, snapshot history, raw JSON review, and export
+  links.
+- Made S3 snapshot reads service-aware so future raw snapshot splitting can keep
+  the same partition style while avoiding reads of unrelated service data.
+- Added fleet report models and Markdown export rendering.
+- Added `POST /collect-all`, `/api/fleet-report`, `/exports/fleet.json`,
+  `/exports/fleet.md`, `/exports/instance.json`, and `/exports/instance.md`.
+- Added root `./run.sh` as the local central runner.
+- Local validation passed: `bash -n run.sh`,
+  `uv run infra-auditor config validate`, `uv run ruff check .`,
+  `uv run ruff format --check .`, `uv run mypy src`, and `uv run pytest` with
+  35 tests.
+- Launched the report console through `./run.sh` at
+  `http://127.0.0.1:8008`; `/healthz` returned OK, `/` and the instance detail
+  view returned HTTP 200, and `/api/fleet-report?service=rds-postgres` loaded
+  without S3 read errors.
+- Exercised `POST /collect-all?service=rds-postgres` through the running UI.
+  Fresh S3-backed collection succeeded for both configured instances and wrote:
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt=2026-09-04/20260904T061600Z.json`
+  and
+  `s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/service=rds-postgres/instance=udb/dt=2026-09-04/20260904T061607Z.json`.
+- The fresh fleet report contains 2 instances, 33 total findings, 0 critical, 4
+  high, 19 medium, 10 low, and no S3 read errors.
+
+2026-09-04 service-section UI refactor:
+
+- Reworked the UI shell so the left pane is navigation only: RDS, Postgres, AWS,
+  Elasticsearch, Bitbucket, Reports, Raw Data, and a fixed Chat entry.
+- Moved server, database, snapshot, severity, rule, export, and generate actions
+  into right-pane control strips.
+- Split the old instance/fleet UI into dedicated RDS, Postgres, Reports, Raw,
+  planned-service, and Chat partials.
+- RDS currently presents instance-level RDS/AWS evidence from the existing
+  `rds-postgres` snapshots. Postgres presents database inventory,
+  role/activity summaries, and Postgres-specific findings from the same raw
+  snapshots.
+- AWS, Elasticsearch, and Bitbucket are visible as planned sections without
+  standalone collectors. Chat is a UI placeholder only; no LLM/MCP integration
+  or external prompt flow has been added.
+- Added a UI render unit test for the service navigation and RDS/Postgres/Chat
+  right-pane views.
+- Restarted the local report console through `./run.sh`; `/healthz`, RDS,
+  Postgres, Reports, Raw Data, AWS placeholder, and Chat views all returned HTTP
+  200 against S3-backed data.
+
+2026-09-04 UI polish and async content loading:
+
+- Added a border-mounted sidebar collapse/expand control. Expanded mode shows
+  icon and text navigation; collapsed mode keeps the project logo and nav icons.
+- Added a light/dark theme toggle in the project header and stores the selected
+  theme in browser local storage.
+- Updated CDN assets to Bootstrap `5.3.8` and Bootstrap Icons `1.13.1`.
+- Changed the dashboard runtime flow so `/` returns the UI shell quickly and
+  `/view` loads the selected S3-backed RDS/Postgres/Reports/Raw content behind a
+  central loader.
+- Added loader behavior for form submits so generate actions visibly enter a
+  running state before redirecting back to the shell.
+- Live verification: `/` returned HTTP 200 without waiting on S3-backed report
+  reads; `/view` returned HTTP 200 for RDS, Postgres, Reports, Raw Data, and
+  Chat.
+
+2026-09-04 service/subservice raw artifacts and base MCP layer:
+
+- Designed the first raw split boundary as eight service/subservice artifacts
+  per instance run: `rds/instance`, `rds/operations`,
+  `rds/ec2-security-groups`, `rds/cloudwatch-rds-metrics`,
+  `postgres/database-inventory`, `postgres/activity-summary`,
+  `postgres/role-security`, and
+  `audit-heuristics/deterministic-findings`.
+- Kept the full `service=rds-postgres` raw snapshot as the compatibility
+  artifact for existing UI/report reads.
+- Added `SnapshotSplitArtifact` models, service/subservice key/prefix builders,
+  S3 split writes, and typed S3 split reads under
+  `raw/snapshots/artifact_schema=...`.
+- Added `uv run infra-auditor mcp` using the official MCP Python SDK v2
+  (`mcp==2.1.1` resolved locally).
+- Added `sync_latest_audit_data` and `sync_today_audit_data` as controlled MCP
+  tools that call the existing read-only collector workflow for configured
+  aliases and write immutable S3 audit artifacts. Today sync skips aliases that
+  already have a full snapshot for the current UTC day.
+- MCP tools are constrained to configured instances, latest/listed full
+  snapshots, deterministic reports, filtered findings, latest/listed approved
+  split artifacts, and controlled sync. No generic SQL, arbitrary AWS calls,
+  arbitrary S3 key reads, secrets, query text, shell bridge, or remediation
+  tools were added.
+- Local validation passed: `uv run infra-auditor config validate`,
+  `uv run ruff check .`, `uv run ruff format --check .`,
+  `uv run mypy src`, `uv run pytest` with 41 tests, and
+  `uv run infra-auditor --help` / `uv run infra-auditor mcp --help`.
+- Local UI verification on `127.0.0.1:8009` returned HTTP 200 for `/`, RDS,
+  AWS/EC2 planned placeholders, Raw Data full snapshot, Raw Data split
+  selection, Reports, and Chat views.
+- No live AWS or PostgreSQL collection was run in this implementation session.
+
+2026-09-04 sync UX and domain cleanup:
+
+- Corrected the local UI domain split: current CloudWatch RDS metrics and
+  attached EC2 security group ingress are shown under RDS, not as standalone AWS
+  or EC2 pages.
+- Renamed the Postgres navigation/page label to Database (PG).
+- Added the project version beside the UI title, sourced from package metadata
+  derived from `pyproject.toml`.
+- Added background UI sync jobs with status polling, per-alias
+  collected/skipped/failed results, and visible `Sync this`, `Sync all`, and `Sync today`
+  actions.
+- Removed the old synchronous web collect endpoints; `uv run infra-auditor collect`
+  remains the direct terminal collection path.
+- Updated MCP with `sync_today_audit_data`; it skips collection when the latest
+  configured full snapshot and all current split artifacts are already under the
+  current UTC day.
+- Added a gradual permission expansion plan for RDS metrics, Database (PG), AWS
+  identity posture, IAM Identity Center, and EC2 fleet posture.
+- Validation passed: `uv run ruff format .`, `uv run ruff check .`,
+  `uv run mypy src`, `uv run pytest` with 43 tests,
+  `uv run ruff format --check .`, `uv run infra-auditor config validate`,
+  `uv run infra-auditor --help`, and `uv run infra-auditor mcp --help`.
+- Restarted the local report console on `127.0.0.1:8009`; `/`, RDS, RDS
+  metrics, Raw Data split selection, and the sync-job status API returned
+  expected HTTP responses.
+
 2026-08-26 local validation:
 
 - `uv sync` passed.
@@ -113,4 +401,4 @@ implementation.
 - `uv run pytest` passed: 13 tests.
 - `uv run infra-auditor config validate` passed: 2 configured instances, default region `ap-south-1`.
 
-No live AWS or PostgreSQL collection was run in this bootstrap session.
+No live AWS or PostgreSQL collection was run in that bootstrap session.

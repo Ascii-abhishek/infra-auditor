@@ -20,9 +20,16 @@ uv run ruff format .
 Unit tests must not require live AWS or PostgreSQL. Use fakes/stubs/fixtures for:
 
 - RDS `DescribeDBInstances`,
+- EC2 `DescribeSecurityGroups`,
+- CloudWatch `GetMetricData`,
+- RDS operations/configuration describe APIs,
 - Secrets Manager `GetSecretValue`,
 - PostgreSQL connection/cursor behavior,
-- snapshot output paths.
+- S3 `PutObject` snapshot writes,
+- S3 `ListBucket`/`GetObject` snapshot reads,
+- report builders, Markdown renderers, service-aware S3 reads, local UI route
+  registration, service-section template rendering, and lightweight shell plus
+  async `/view` rendering.
 
 ## Integration Tests
 

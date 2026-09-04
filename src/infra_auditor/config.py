@@ -6,12 +6,20 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from infra_auditor.exceptions import ConfigurationError
 
 _INSTANCE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
+_SNAPSHOT_BUCKET_PREFIX = "infra-audit-rl"
+
+
+class SysEnv(StrEnum):
+    """Deployment environment controlled by SYS_ENV."""
+
+    DEV = "dev"
+    PROD = "prod"
 
 
 class LogFormat(StrEnum):
@@ -32,16 +40,22 @@ class PostgresSSLMode(StrEnum):
 class AppSettings(BaseSettings):
     """Process settings loaded from environment variables and optional local dotenv."""
 
-    environment: str = Field(default="local", min_length=1)
+    sys_env: SysEnv = Field(
+        default=SysEnv.DEV,
+        validation_alias=AliasChoices("SYS_ENV", "INFRA_AUDITOR_SYS_ENV"),
+    )
     aws_region: str = Field(default="ap-south-1", min_length=1)
     aws_profile: str | None = None
     log_level: str = "INFO"
     log_format: LogFormat = LogFormat.CONSOLE
     resource_config_path: Path = Path("config/environments.example.yaml")
-    snapshot_output_dir: Path = Path("data/snapshots")
     bootstrap_database: str = Field(default="postgres", min_length=1)
     postgres_ssl_mode: PostgresSSLMode = PostgresSSLMode.REQUIRE
     postgres_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    cloudwatch_metric_lookback_hours: int = Field(default=24, ge=1, le=168)
+    cloudwatch_metric_period_seconds: int = Field(default=300, ge=60, le=86400)
+    web_host: str = Field(default="127.0.0.1", min_length=1)
+    web_port: int = Field(default=8008, ge=1, le=65535)
     application_name: str = Field(default="infra-auditor", min_length=1, max_length=64)
 
     model_config = SettingsConfigDict(
@@ -50,6 +64,18 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def environment(self) -> str:
+        """Snapshot environment value."""
+
+        return self.sys_env.value
+
+    @property
+    def snapshot_bucket(self) -> str:
+        """S3 bucket used for raw snapshot persistence."""
+
+        return f"{_SNAPSHOT_BUCKET_PREFIX}-{self.sys_env.value}"
 
     @field_validator("log_level")
     @classmethod

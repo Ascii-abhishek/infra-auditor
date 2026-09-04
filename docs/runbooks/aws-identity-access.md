@@ -11,9 +11,12 @@ Implemented code path:
 infra-auditor collect
 -> optional boto3 profile from INFRA_AUDITOR_AWS_PROFILE
 -> RDS DescribeDBInstances
+-> EC2 DescribeSecurityGroups
+-> CloudWatch GetMetricData
+-> RDS DescribePendingMaintenanceActions, DescribeDBRecommendations, DescribeDBParameters
 -> Secrets Manager GetSecretValue
--> fixed PostgreSQL pg_catalog.pg_database inventory
--> local JSON snapshot
+-> fixed PostgreSQL pg_catalog inventory and activity summaries
+-> S3 JSON snapshot
 ```
 
 The code is ready for temporary AWS credentials. `INFRA_AUDITOR_AWS_PROFILE` is
@@ -21,8 +24,9 @@ optional for local development. If it is unset, boto3 uses its standard provider
 chain, including ECS task credentials in production. Production must not depend
 on a named local AWS profile.
 
-No code changes are required before creating the human developer permission set
-or the two Secrets Manager entries.
+The human developer permission set needs S3 `PutObject` access for dev snapshot
+writes and read-only AWS describe/get permissions for each implemented evidence
+collector.
 
 ## Identity Boundaries
 
@@ -115,6 +119,62 @@ repository:
         "arn:aws:secretsmanager:ap-south-1:<account-id>:secret:infra-auditor/postgres/raptor-catalog-*",
         "arn:aws:secretsmanager:ap-south-1:<account-id>:secret:infra-auditor/postgres/udb-*"
       ]
+    },
+    {
+      "Sid": "WriteDevInfraAuditSnapshots",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/*"
+    },
+    {
+      "Sid": "ListDevInfraAuditSnapshotsForReports",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::infra-audit-rl-dev",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "raw/snapshots/*"
+        }
+      }
+    },
+    {
+      "Sid": "ReadDevInfraAuditSnapshotsForReports",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/*"
+    },
+    {
+      "Sid": "ReadAttachedSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeSecurityGroups",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadRdsCloudWatchMetrics",
+      "Effect": "Allow",
+      "Action": "cloudwatch:GetMetricData",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadRdsOperationalRecommendations",
+      "Effect": "Allow",
+      "Action": "rds:DescribeDBRecommendations",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadConfiguredRdsMaintenance",
+      "Effect": "Allow",
+      "Action": "rds:DescribePendingMaintenanceActions",
+      "Resource": [
+        "arn:aws:rds:ap-south-1:<account-id>:db:cleancatalograptorsupplies",
+        "arn:aws:rds:ap-south-1:<account-id>:db:udb"
+      ]
+    },
+    {
+      "Sid": "ReadConfiguredRdsParameterGroups",
+      "Effect": "Allow",
+      "Action": "rds:DescribeDBParameters",
+      "Resource": "arn:aws:rds:ap-south-1:<account-id>:pg:*"
     }
   ]
 }
@@ -124,12 +184,59 @@ Notes:
 
 - Do not grant `AdministratorAccess`, `PowerUserAccess`, `ReadOnlyAccess`,
   `rds:*`, `secretsmanager:*`, `s3:*`, `iam:*`, or `ec2:*`.
+- Snapshot writers do not need `s3:GetObject`, `s3:ListBucket`, or
+  `s3:DeleteObject`.
+- The local report UI does need `s3:ListBucket` and `s3:GetObject` for raw
+  snapshots. Keep that reader permission separate from unattended collection
+  roles if the production collector should remain write-only.
 - If the secrets use the AWS managed `aws/secretsmanager` key, no explicit
   `kms:Decrypt` statement is expected. If a customer-managed KMS key is chosen,
   add narrowly scoped `kms:Decrypt` for that key.
-- CloudWatch metrics/logs, Performance Insights/Database Insights, RDS
-  recommendations, S3, and SES are deferred until collectors or reports actually
-  use those APIs.
+- CloudWatch Logs, Performance Insights/Database Insights, and SES are deferred
+  until collectors or reports actually use those APIs.
+- Current code does not require `ec2:DescribeSecurityGroupRules`,
+  `cloudwatch:ListMetrics`, `rds:Modify*`, or any `pi:*` permissions.
+
+## Gradual Permission Expansion
+
+Add permissions only when the matching collector and report contract are being
+implemented. The preferred loop is:
+
+1. Add the smallest read-only action set for one collector family.
+2. Update `docs/security-boundaries.md`, `docs/runtime-flows.md`, and
+   `docs/data-contracts.md`.
+3. Add fixed collector code and fake-client unit tests.
+4. Run one live dev collection and inspect snapshots for accidental secrets,
+   raw query text, and excessive identity data.
+5. Promote the new data into reports and MCP only after the snapshot boundary is
+   accepted.
+
+Recommended expansion order:
+
+1. RDS metrics depth:
+   extend the fixed CloudWatch RDS metric list through `cloudwatch:GetMetricData`
+   before adding a new permission. Keep dimensions fixed to configured RDS DB
+   instances.
+2. RDS performance context:
+   evaluate Performance Insights or Database Insights read APIs only after a
+   minimization design exists for SQL-like dimensions and wait/event data.
+3. Database (PG) depth:
+   prefer PostgreSQL catalog/statistics grants already allowed by the auditor
+   role. Do not add `pg_read_all_data`, `pg_stat_scan_tables`, `pg_monitor`, or
+   unrestricted query text.
+4. AWS identity posture:
+   consider `iam:GenerateCredentialReport`, `iam:GetCredentialReport`,
+   `iam:GetAccessKeyLastUsed`, and
+   `iam:GenerateServiceLastAccessedDetails`/`iam:GetServiceLastAccessedDetails`.
+   Store last-used and credential-state metadata only, never access key secret
+   values.
+5. IAM Identity Center:
+   consider read-only `sso-admin` and `identitystore` list/describe APIs such as
+   permission-set and user/group listing. Minimize personal data in snapshots.
+6. EC2 fleet posture:
+   consider `ec2:DescribeInstances`, `ec2:DescribeVolumes`,
+   `ec2:DescribeInstanceStatus`, and fixed EC2 CloudWatch metric reads for
+   configured instances only.
 
 After assigning the permission set to your user or group, configure the local
 profile. These examples use `infra-auditor-dev`; use the actual local profile
@@ -151,6 +258,7 @@ or local `.env` only for the non-secret profile setting:
 
 ```bash
 INFRA_AUDITOR_AWS_PROFILE=infra-auditor-dev
+SYS_ENV=dev
 ```
 
 Never store `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, or
@@ -229,8 +337,8 @@ AWS_PROFILE=infra-auditor-dev uv run infra-auditor discover aws --instance rapto
 AWS_PROFILE=infra-auditor-dev uv run infra-auditor discover aws --instance udb
 ```
 
-Run `collect` only after the Secrets Manager entries exist and the runner has
-network access to PostgreSQL:
+Run `collect` only after the Secrets Manager entries exist, S3 snapshot write
+access exists, and the runner has network access to PostgreSQL:
 
 ```bash
 AWS_PROFILE=infra-auditor-dev uv run infra-auditor collect --instance raptor-catalog
@@ -254,11 +362,14 @@ with `engine`, `host`, `port`, `dbname`, or `dbInstanceIdentifier`.
 
 - RDS describe/read APIs used by implemented collectors.
 - Secrets Manager `GetSecretValue` for `infra-auditor/postgres/*`.
-- CloudWatch metrics/logs reads only when collectors use them.
+- CloudWatch metric reads used by implemented collectors.
+- EC2 security group describe reads used by implemented collectors.
+- RDS recommendations, pending maintenance, and parameter group reads used by
+  implemented collectors.
+- CloudWatch logs reads only when collectors use them.
 - Performance Insights/Database Insights reads only when collectors use them.
-- RDS recommendations read only when collectors use them.
-- S3 `PutObject` to approved append-only audit-data prefixes after S3 storage is
-  implemented.
+- S3 `PutObject` to the approved `raw/snapshots/*` prefix in the production
+  audit bucket.
 - SES send permissions only when reports are implemented.
 
 The ECS task execution role will hold ECS/Fargate execution permissions:

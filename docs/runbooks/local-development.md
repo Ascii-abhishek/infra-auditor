@@ -14,8 +14,11 @@ uv run pytest
 Use `.env` for non-secret local settings only:
 
 ```bash
+SYS_ENV=dev
 INFRA_AUDITOR_AWS_PROFILE=your-sso-profile
 INFRA_AUDITOR_LOG_FORMAT=console
+INFRA_AUDITOR_WEB_HOST=127.0.0.1
+INFRA_AUDITOR_WEB_PORT=8008
 ```
 
 Do not put database passwords or AWS keys in `.env`.
@@ -30,7 +33,33 @@ uv run infra-auditor collect --instance raptor-catalog
 uv run infra-auditor collect --instance udb
 ```
 
-Snapshots are written under `data/snapshots/`, which is gitignored.
+Compatibility snapshots and split service/subservice artifacts are written
+under `s3://infra-audit-rl-dev/raw/snapshots/...` unless `SYS_ENV=prod` is
+explicitly set by the runtime environment.
+
+## Local Report UI
+
+After S3 read permissions are available:
+
+```bash
+./run.sh
+```
+
+## Local MCP Server
+
+After S3 read permissions are available, run the MCP server with:
+
+```bash
+uv run infra-auditor mcp
+```
+
+Open `http://127.0.0.1:8008`.
+
+The direct command is still available when dependency sync is not needed:
+
+```bash
+uv run infra-auditor serve
+```
 
 ## Quality Gates
 

@@ -17,41 +17,74 @@ Typer CLI
 -> boto3 Session
 -> RDS DescribeDBInstances
 -> RDSInstance model
+-> EC2 DescribeSecurityGroups for attached groups
+-> CloudWatch GetMetricData for bounded RDS metric summaries
+-> RDS DescribePendingMaintenanceActions, DescribeDBRecommendations, DescribeDBParameters
 -> Secrets Manager GetSecretValue
 -> PostgresCredentials model
 -> PostgresConnectionFactory
 -> DatabaseDiscoveryCollector
+-> ActivitySummaryCollector
+-> RoleSecurityCollector
+-> deterministic AWS/RDS, PostgreSQL activity, and PostgreSQL security rules
 -> AuditSnapshot model
--> LocalSnapshotWriter
--> data/snapshots/<run_id>/<alias>.json
+-> S3SnapshotWriter
+-> s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/.../<YYYYMMDDTHHMMSSZ>.json
+-> service/subservice artifacts under raw/snapshots/artifact_schema=...
 ```
 
 ### Inputs
 
-- Process settings: environment, AWS region/profile, log level/format, registry path, snapshot output path, bootstrap database, PostgreSQL SSL mode, connect timeout.
+- Process settings: `SYS_ENV`, AWS region/profile, log level/format, registry path,
+  bootstrap database, PostgreSQL SSL mode, connect timeout.
 - Resource registry: logical alias, RDS DB instance identifier, secret ID, optional per-instance region.
-- AWS APIs: RDS DB instance metadata and Secrets Manager secret values.
-- PostgreSQL catalog: `pg_catalog.pg_database`.
+- AWS APIs: RDS DB instance metadata, EC2 security group ingress, CloudWatch RDS
+  metrics, RDS operations/configuration APIs, and Secrets Manager secret values.
+- PostgreSQL catalog/activity: `pg_catalog.pg_database`,
+  `pg_catalog.pg_stat_activity`, `pg_catalog.pg_roles`, and
+  `pg_catalog.pg_auth_members`.
 
 ### Outputs
 
-- CLI summary with run ID, instance alias, collector status, database count, snapshot path, and overall status.
+- CLI summary with run ID, instance alias, collector status, database count,
+  finding count, snapshot path, and overall status.
 - Structured logs to stdout/stderr.
-- Local JSON snapshot containing run metadata, RDS metadata, database inventory, collector statuses, and gaps.
+- S3 JSON snapshot containing run metadata, RDS metadata, AWS network/metric/ops
+  evidence, database inventory, PostgreSQL activity evidence, PostgreSQL role
+  security evidence, deterministic findings, collector statuses, and gaps.
+- S3 JSON split artifacts containing the same run identity but only the approved
+  RDS, PostgreSQL, or deterministic-finding boundary fields.
 
 ### Failure Paths
 
 - Settings or YAML validation failure exits before AWS access.
 - AWS discovery failure records an `aws.rds.describe_db_instances` gap and the instance snapshot is `FAILED`.
+- EC2 security group, CloudWatch metric, or RDS operations failures keep RDS
+  discovery evidence, record collector-specific gaps, and continue toward
+  Secrets Manager/PostgreSQL collection.
 - Secret resolution failure keeps AWS evidence, records a `secrets.postgres_credentials` gap, skips database inventory, and returns `PARTIAL_SUCCESS`.
-- PostgreSQL connection or database inventory failure keeps AWS evidence, records a `postgres.database_inventory` gap, and returns `PARTIAL_SUCCESS`.
-- Snapshot write failure raises `SnapshotValidationError`.
+- PostgreSQL connection failure keeps AWS evidence, records gaps for each
+  PostgreSQL collector, and returns `PARTIAL_SUCCESS`.
+- PostgreSQL database inventory or activity-summary failure keeps other
+  available evidence, records collector-specific gaps, and returns
+  `PARTIAL_SUCCESS`.
+- PostgreSQL role security failure keeps earlier evidence, records a
+  `postgres.role_security` gap, and returns `PARTIAL_SUCCESS`.
+- Snapshot write failure raises `SnapshotValidationError` and the CLI exits non-zero.
+- Snapshot split write failure also raises `SnapshotValidationError`; the S3
+  operation is intentionally append-only and does not attempt cleanup or
+  overwrite.
 
 ### Diff Context
 
-Added V0.1 config, logging, AWS discovery, Secrets Manager, PostgreSQL database inventory, snapshot, and local storage boundaries.
+Added V0.1 config, logging, AWS discovery, AWS security group ingress,
+CloudWatch RDS metric summaries, RDS operations evidence, Secrets Manager,
+PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
+security, deterministic findings, snapshot, S3 storage, and split raw artifact
+boundaries.
 
-Bypassed/deferred: deterministic rules, findings, S3, Parquet, Athena, SES, CloudWatch metrics/log collection, RDS recommendations, LLM, MCP, and remediation.
+Bypassed/deferred: Parquet, Athena, SES, CloudWatch log collection,
+Performance Insights, LLM analyst, hosted MCP, and remediation.
 
 Untouched: live AWS resources, IAM, RDS configuration, PostgreSQL roles, PostgreSQL objects, application tables.
 
@@ -78,3 +111,145 @@ Typer CLI
 ### Failure Paths
 
 Invalid config exits before AWS. Missing AWS permission, missing instance, or API failure prints a failed discovery line and exits non-zero.
+
+## V0.1 `serve`
+
+### Entry Point
+
+```bash
+uv run infra-auditor serve
+```
+
+For local day-to-day use, the central runner performs dependency checks, loads
+`.env`, and starts the same server:
+
+```bash
+./run.sh
+```
+
+### Call Chain
+
+```text
+Typer CLI
+-> AppSettings from INFRA_AUDITOR_* and optional .env
+-> FastAPI app on INFRA_AUDITOR_WEB_HOST:INFRA_AUDITOR_WEB_PORT
+-> load_resource_config(config/environments.example.yaml)
+-> GET / returns lightweight Bootstrap shell and loader
+-> browser fetches GET /view for selected section
+-> boto3 Session
+-> S3 ListBucket/GetObject for raw snapshots
+-> AuditSnapshot validation
+-> report builder
+-> selected RDS/Database (PG)/Reports/Raw content, JSON APIs, and Markdown/JSON exports
+```
+
+The UI uses separate HTML, CSS, and JavaScript assets. It exposes controlled
+background sync jobs through `POST /sync-jobs`, with status polling at
+`GET /api/sync-jobs/{job_id}`. The terminal CLI remains the direct collection
+entrypoint; the web UI uses background jobs so slow collection shows per-alias
+progress.
+
+The left pane is navigation only. Current live sections are RDS, Database (PG),
+Reports, Raw Data, and Chat. AWS, EC2, Elasticsearch, and Bitbucket are planned
+standalone domains. Runtime selectors and actions live in the right pane. RDS
+owns current RDS instance metadata, RDS operations, RDS-attached security group
+ingress, and CloudWatch RDS metric evidence. Database (PG) owns PostgreSQL
+database inventory, activity summaries, and role security evidence. Raw Data can
+show either the full compatibility snapshot or a selected split artifact.
+
+Service views expose a first control row for subservice, date, and timestamp.
+The default is the latest available object for the selected instance.
+
+The sidebar collapse state and light/dark theme preference are stored in browser
+local storage. These are client-only UI preferences.
+
+Snapshot reads are service-aware. The current service is `rds-postgres`, and the
+reader scopes S3 listing to:
+
+```text
+raw/snapshots/snapshot_schema=<version>/env=<env>/region=<region>/service=<service>/instance=<alias>/
+```
+
+### Outputs
+
+- HTML dashboard at `/`.
+- JSON APIs at `/api/snapshots`, `/api/latest-report`, `/api/fleet-report`, and
+  `/api/snapshot`.
+- JSON/Markdown exports at `/exports/fleet.*` and `/exports/instance.*`.
+- Health check at `/healthz`.
+
+### Failure Paths
+
+Missing S3 read permissions or missing snapshots render an error in the UI.
+Collection failures through the UI follow the same partial-success snapshot
+semantics as the CLI.
+
+The Chat section is a placeholder until an approved MCP/LLM design exists. It
+does not send report data to an external model.
+
+## V0.1 `mcp`
+
+### Entry Point
+
+```bash
+uv run infra-auditor mcp
+```
+
+### Call Chain
+
+```text
+Typer CLI
+-> infra_auditor.mcp.server
+-> official MCP Python SDK server over stdio
+-> AppSettings from INFRA_AUDITOR_* and optional .env
+-> load_resource_config(config/environments.example.yaml)
+-> boto3 Session
+-> S3 ListBucket/GetObject for approved raw snapshot prefixes
+-> AuditSnapshot or SnapshotSplitArtifact validation
+-> deterministic report builder where requested
+-> structured MCP tool result
+```
+
+### Tools
+
+- `describe_audit_data_boundary`
+- `list_audit_instances`
+- `list_audit_snapshots`
+- `get_latest_instance_report`
+- `get_fleet_report`
+- `get_instance_findings`
+- `list_snapshot_split_artifacts`
+- `get_latest_snapshot_split_artifact`
+- `sync_latest_audit_data`
+- `sync_today_audit_data`
+
+### Inputs
+
+- Process settings and non-secret resource registry.
+- Stored full snapshots under `raw/snapshots/.../service=rds-postgres/...`.
+- Stored split artifacts under fixed `raw/snapshots/artifact_schema=...`
+  service/subservice partitions.
+
+### Outputs
+
+- MCP structured tool responses containing approved configuration summaries,
+  snapshot object metadata, deterministic report models, finding summaries,
+  split raw artifacts, and controlled sync results.
+
+### Failure Paths
+
+- Invalid settings or registry values fail startup.
+- Unknown instance aliases fail the tool call.
+- Missing S3 read permission, missing objects, or schema validation failures
+  return tool errors from the read-service boundary.
+
+### Safety Boundary
+
+The MCP server does not expose generic SQL, arbitrary AWS APIs, arbitrary S3 key
+reads, Secrets Manager reads, query text retrieval, shell command bridges, or
+remediation tools. `sync_latest_audit_data` and `sync_today_audit_data` are
+constrained live collection entrypoints over configured aliases only; they call
+the existing read-only collector workflow and write immutable S3 audit
+artifacts. The today mode checks the latest full snapshot for each alias and
+skips collection only when that object and all current split artifacts are
+already partitioned under the current UTC day.

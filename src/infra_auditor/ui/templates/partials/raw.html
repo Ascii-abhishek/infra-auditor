@@ -1,0 +1,26 @@
+<div class="page-header">
+  <div>
+    <h1>Raw Data</h1>
+    <div class="header-meta">{{ selected_instance }} · {{ selected_subservice_label }} · {{ selected_date or "latest" }} · {{ selected_timestamp or "latest" }}</div>
+  </div>
+</div>
+
+{% include "partials/controls.html" %}
+
+{% if raw_snapshot_json %}
+  <section class="section-block">
+    <div class="section-header">
+      <div>
+        <div class="section-title mb-0">Snapshot JSON</div>
+        <div class="table-subtext">{{ raw_source_uri or "" }}</div>
+      </div>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-target="raw-json">
+        <i class="bi bi-copy"></i>
+        <span>Copy</span>
+      </button>
+    </div>
+    <pre id="raw-json" class="json-panel">{{ raw_snapshot_json }}</pre>
+  </section>
+{% elif not error %}
+  <div class="empty-state">No {{ selected_subservice_label }} artifact loaded for this selection.</div>
+{% endif %}

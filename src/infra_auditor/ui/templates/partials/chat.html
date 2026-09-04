@@ -1,0 +1,27 @@
+<div class="page-header">
+  <div>
+    <h1>Audit Chat</h1>
+    <div class="header-meta">Single-session workspace</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="/?section=chat&service={{ selected_service }}&new_chat=true">
+    <i class="bi bi-plus-lg"></i>
+    <span>New chat</span>
+  </a>
+</div>
+
+<section class="chat-panel">
+  <div class="chat-transcript">
+    {% if new_chat %}
+      <div class="chat-empty">New chat session.</div>
+    {% else %}
+      <div class="chat-empty">No previous chat content.</div>
+    {% endif %}
+  </div>
+  <form class="chat-composer">
+    <input class="form-control" type="text" placeholder="MCP chat is not connected in V0.1" disabled>
+    <button class="btn btn-primary" type="button" disabled>
+      <i class="bi bi-send"></i>
+      <span>Send</span>
+    </button>
+  </form>
+</section>

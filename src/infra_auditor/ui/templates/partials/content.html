@@ -1,0 +1,20 @@
+{% if notice %}
+  <div class="alert alert-success py-2">{{ notice }}</div>
+{% endif %}
+{% if error %}
+  <div class="alert alert-danger py-2">{{ error }}</div>
+{% endif %}
+
+{% if section == "rds" %}
+  {% include "partials/rds.html" %}
+{% elif section == "postgres" %}
+  {% include "partials/postgres.html" %}
+{% elif section == "reports" %}
+  {% include "partials/reports.html" %}
+{% elif section == "raw" %}
+  {% include "partials/raw.html" %}
+{% elif section == "chat" %}
+  {% include "partials/chat.html" %}
+{% else %}
+  {% include "partials/coming_soon.html" %}
+{% endif %}

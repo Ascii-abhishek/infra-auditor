@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Infra Auditor v{{ project_version }}</title>
+  <script>
+    try {
+      const theme = localStorage.getItem("infra-auditor-theme") || "light";
+      const sidebar = localStorage.getItem("infra-auditor-sidebar");
+      document.documentElement.dataset.bsTheme = theme;
+      if (sidebar === "collapsed") {
+        document.documentElement.classList.add("sidebar-collapsed");
+      }
+    } catch {
+      document.documentElement.dataset.bsTheme = "light";
+    }
+  </script>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/static/app.css" rel="stylesheet">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark">IA</div>
+        <div class="brand-copy">
+          <div class="brand-title">Infra Auditor <sub class="brand-version">v{{ project_version }}</sub></div>
+          <div class="brand-subtitle">{{ settings.environment }} / {{ settings.snapshot_bucket }}</div>
+        </div>
+        <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">
+          <i class="bi bi-moon-stars"></i>
+        </button>
+      </div>
+
+      <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-label="Collapse sidebar">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+
+      <nav class="nav-list" aria-label="Audit sections">
+        {% for item in nav_items %}
+          <a class="nav-item {% if section == item.id %}active{% endif %}" href="/?section={{ item.id }}&service={{ selected_service }}{% if item.href_extra == 'instance' %}&instance={{ selected_instance }}{% endif %}" title="{{ item.label }}">
+            <i class="bi {{ item.icon }}"></i>
+            <span>{{ item.label }}</span>
+            <small>{{ item.state }}</small>
+          </a>
+        {% endfor %}
+      </nav>
+
+      <div class="chat-dock">
+        <a class="nav-item {% if section == 'chat' %}active{% endif %}" href="/?section=chat&service={{ selected_service }}" title="Chat">
+          <i class="bi bi-chat-square-text"></i>
+          <span>Chat</span>
+          <small>Queued</small>
+        </a>
+      </div>
+    </aside>
+
+    <main class="content" id="content-root" data-content-url="{{ content_url }}">
+      <div class="loader-panel" role="status" aria-live="polite">
+        <div class="spinner-border text-primary" aria-hidden="true"></div>
+        <div class="loader-title">Loading audit data</div>
+        <div class="loader-copy">Preparing {{ section_label }} from the latest snapshot context.</div>
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

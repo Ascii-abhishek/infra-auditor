@@ -159,3 +159,244 @@ Record current official documentation used for architectural or implementation d
 - URL: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-idp_oidc.html
 - Date consulted: 2026-09-02
 - Conclusion: OIDC trust policies for GitHub Actions must restrict token claims such as repository or subject so repositories outside the owner's control cannot assume the role.
+
+## 2026-09-03 S3 Snapshot Persistence Sources
+
+### Amazon S3 bucket naming rules
+
+- URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+- Date consulted: 2026-09-03
+- Conclusion: General purpose bucket names must be DNS-compatible and globally
+  unique in the AWS partition; predictable names may require an owner-specific
+  suffix.
+
+### Amazon S3 default server-side encryption
+
+- URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html
+- Date consulted: 2026-09-03
+- Conclusion: New S3 objects are encrypted at rest by default with SSE-S3, and
+  clients may explicitly request SSE-S3 on `PutObject` with `AES256`.
+
+### Amazon S3 SSE-KMS permissions
+
+- URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
+- Date consulted: 2026-09-03
+- Conclusion: S3 `PutObject` with SSE-KMS needs `kms:GenerateDataKey`; raw
+  snapshot writes currently use SSE-S3 to keep the writer permission simple.
+
+### Amazon S3 conditional writes
+
+- URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html
+- Date consulted: 2026-09-03
+- Conclusion: `If-None-Match: *` on `PutObject` prevents overwriting an existing
+  object at the same key and only requires `s3:PutObject`.
+
+### Amazon S3 Object Ownership
+
+- URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html
+- Date consulted: 2026-09-03
+- Conclusion: Bucket owner enforced mode disables ACLs and uses policies for
+  object access, matching the project preference for simple IAM boundaries.
+
+## 2026-09-03 PostgreSQL Role Security Sources
+
+### PostgreSQL 15 `pg_roles`
+
+- URL: https://www.postgresql.org/docs/15/view-pg-roles.html
+- Date consulted: 2026-09-03
+- Conclusion: `pg_roles` is a publicly readable view of role attributes that
+  blanks the password field, so it is the safe source for role security
+  evidence instead of `pg_authid`.
+
+### PostgreSQL 15 `pg_auth_members`
+
+- URL: https://www.postgresql.org/docs/15/catalog-pg-auth-members.html
+- Date consulted: 2026-09-03
+- Conclusion: `pg_auth_members` records cluster-wide role membership edges,
+  including member role, parent role, grantor, and admin option.
+
+### PostgreSQL 15 role membership
+
+- URL: https://www.postgresql.org/docs/15/role-membership.html
+- Date consulted: 2026-09-03
+- Conclusion: PostgreSQL supports direct and indirect role membership; login
+  roles can `SET ROLE` to directly or indirectly granted roles, and group roles
+  are typically created without `LOGIN`.
+
+### PostgreSQL 15 `pg_stat_activity`
+
+- URL: https://www.postgresql.org/docs/15/monitoring-stats.html#MONITORING-PG-STAT-ACTIVITY-VIEW
+- Date consulted: 2026-09-03
+- Conclusion: `pg_stat_activity` exposes backend/session metadata used for
+  bounded activity summaries. The project excludes `query` text from snapshots.
+
+## 2026-09-03 AWS RDS Operational Evidence Sources
+
+### CloudWatch `GetMetricData`
+
+- URL: https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_GetMetricData.html
+- Date consulted: 2026-09-03
+- Conclusion: `GetMetricData` retrieves metric queries over a bounded
+  `StartTime`/`EndTime`, supports pagination with `NextToken`, and returns
+  metric result timestamps and values.
+
+### Amazon RDS CloudWatch metrics
+
+- URL: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-metrics.html
+- Date consulted: 2026-09-03
+- Conclusion: RDS publishes operational metrics such as CPU utilization,
+  database connections, freeable memory, free storage, latency, IOPS, disk queue
+  depth, and burst balance to CloudWatch.
+
+### EC2 `DescribeSecurityGroups`
+
+- URL: https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSecurityGroups.html
+- Date consulted: 2026-09-03
+- Conclusion: `DescribeSecurityGroups` returns security group inbound
+  permissions, including IPv4, IPv6, security-group, and prefix-list peers.
+
+### RDS `DescribePendingMaintenanceActions`
+
+- URL: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribePendingMaintenanceActions.html
+- Date consulted: 2026-09-03
+- Conclusion: This API returns pending maintenance actions and details for an
+  RDS resource.
+
+### RDS `DescribeDBRecommendations`
+
+- URL: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBRecommendations.html
+- Date consulted: 2026-09-03
+- Conclusion: This API returns RDS recommendations that can be filtered by
+  resource ARN in the collector.
+
+### RDS `DescribeDBParameters`
+
+- URL: https://docs.aws.amazon.com/AmazonRDS/latest/APIReference/API_DescribeDBParameters.html
+- Date consulted: 2026-09-03
+- Conclusion: This API returns DB parameter group parameter values and metadata.
+
+## 2026-09-04 AWS Permission Expansion Sources
+
+### IAM credential reports
+
+- URL: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_getting-report.html
+- Date consulted: 2026-09-04
+- Conclusion: IAM credential reports summarize account users and credential
+  posture, including passwords, access keys, and MFA status, without collecting
+  credential secret values.
+
+### IAM `GetAccessKeyLastUsed`
+
+- URL: https://docs.aws.amazon.com/IAM/latest/UserGuide/iam_example_iam_GetAccessKeyLastUsed_section.html
+- Date consulted: 2026-09-04
+- Conclusion: `GetAccessKeyLastUsed` can retrieve last-used metadata for an
+  access key ID; collectors must store metadata only, never secret access keys.
+
+### IAM service last accessed reports
+
+- URL: https://docs.aws.amazon.com/IAM/latest/APIReference/API_GenerateServiceLastAccessedDetails.html
+- Date consulted: 2026-09-04
+- Conclusion: IAM can generate service-last-accessed details for identities and
+  policies, with activity generally delayed and not a live authorization trace.
+
+### IAM Identity Center CLI namespaces
+
+- URL: https://docs.aws.amazon.com/cli/latest/reference/sso-admin/
+- Date consulted: 2026-09-04
+- Conclusion: IAM Identity Center APIs use the `sso` and `identitystore`
+  namespaces for permission-set and identity-store reads.
+
+### Identity Store `ListUsers`
+
+- URL: https://docs.aws.amazon.com/cli/latest/reference/identitystore/list-users.html
+- Date consulted: 2026-09-04
+- Conclusion: `identitystore list-users` returns paginated user objects for an
+  identity store; future collectors must minimize personally identifying fields.
+
+### IAM Identity Center `ListPermissionSets`
+
+- URL: https://docs.aws.amazon.com/cli/latest/reference/sso-admin/list-permission-sets.html
+- Date consulted: 2026-09-04
+- Conclusion: `sso-admin list-permission-sets` lists permission sets for an IAM
+  Identity Center instance and is a candidate for a future read-only collector.
+
+## 2026-09-03 Local Report UI Sources
+
+### FastAPI first steps
+
+- URL: https://fastapi.tiangolo.com/tutorial/first-steps/
+- Date consulted: 2026-09-03
+- Conclusion: FastAPI apps are created with `FastAPI()` and expose path
+  operations with decorators such as `@app.get`.
+
+### Uvicorn settings
+
+- URL: https://uvicorn.dev/settings/
+- Date consulted: 2026-09-03
+- Conclusion: Uvicorn can run ASGI apps programmatically with host and port
+  keyword arguments.
+
+### Bootstrap 5.3 introduction
+
+- URL: https://getbootstrap.com/docs/5.3/getting-started/introduction/
+- Date consulted: 2026-09-03
+- Conclusion: Bootstrap can be used through CDN CSS for responsive layouts
+  without a frontend build step.
+
+## 2026-09-04 UI Asset Sources
+
+### Bootstrap current version
+
+- URL: https://getbootstrap.com/docs/versions/
+- Date consulted: 2026-09-04
+- Conclusion: Bootstrap 5 is the current major release and the latest 5.3 update
+  is `5.3.8`, so the local report console pins the CDN CSS to `5.3.8`.
+
+### Bootstrap Icons current version
+
+- URL: https://icons.getbootstrap.com/
+- Date consulted: 2026-09-04
+- Conclusion: Bootstrap Icons currently reports version `1.13.1`, so the local
+  report console pins the CDN icon font to `1.13.1`.
+
+## 2026-09-04 MCP Read Layer Sources
+
+### Model Context Protocol SDK index
+
+- URL: https://modelcontextprotocol.io/docs/2026-07-28/sdk
+- Date consulted: 2026-09-04
+- Conclusion: Python is a Tier 1 official MCP SDK and all listed SDKs support
+  servers, clients, local/remote transports, and protocol compliance.
+
+### MCP Python SDK installation
+
+- URL: https://py.sdk.modelcontextprotocol.io/get-started/installation/
+- Date consulted: 2026-09-04
+- Version: v2 stable release line, `mcp==2.1.1` resolved locally.
+- Conclusion: The official Python SDK is installed from PyPI as `mcp`, requires
+  Python 3.10+, and v2 is the current stable line with breaking changes from
+  v1.
+
+### MCP Python SDK tools
+
+- URL: https://py.sdk.modelcontextprotocol.io/servers/tools/
+- Date consulted: 2026-09-04
+- Conclusion: `@mcp.tool()` exposes typed Python functions as MCP tools,
+  derives input schemas from type hints/Pydantic `Field`, supports read-only
+  annotations, and treats annotations as client hints rather than security.
+
+### MCP Python SDK structured output
+
+- URL: https://py.sdk.modelcontextprotocol.io/servers/structured-output/
+- Date consulted: 2026-09-04
+- Conclusion: Return annotations define structured output schemas and returned
+  values are validated before leaving the server; Pydantic models and lists are
+  appropriate for the audit report contracts.
+
+### MCP Python SDK running servers
+
+- URL: https://py.sdk.modelcontextprotocol.io/run/
+- Date consulted: 2026-09-04
+- Conclusion: `mcp.run()` defaults to stdio for local servers; stdout is the
+  transport channel, so the project MCP command must avoid user-facing stdout
+  output before the server starts.

@@ -1,10 +1,12 @@
-"""Foundational finding model for the future deterministic rule engine."""
+"""Finding model for deterministic rule output."""
 
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from infra_auditor.models.evidence import EvidenceReference
+
+FindingObservedValue = str | int | float | bool | None | list[str]
 
 
 class FindingSeverity(StrEnum):
@@ -18,10 +20,7 @@ class FindingSeverity(StrEnum):
 
 
 class Finding(BaseModel):
-    """Minimal future-proof finding contract.
-
-    V0.1 does not run rules yet; this model preserves the evidence-reference boundary.
-    """
+    """Minimal finding contract with evidence references."""
 
     rule_id: str
     fingerprint: str
@@ -30,6 +29,7 @@ class Finding(BaseModel):
     resource: str
     title: str
     summary: str
+    observed: dict[str, FindingObservedValue] = Field(default_factory=dict)
     evidence: list[EvidenceReference] = Field(default_factory=list)
     recommendation: str | None = None
 
