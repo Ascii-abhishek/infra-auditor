@@ -7,22 +7,20 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from infra_auditor.mcp.read_service import (
-    DEFAULT_REPORT_SNAPSHOT_SERVICE,
+    ArtifactServiceName,
+    ArtifactSubserviceName,
     AuditDataBoundary,
     AuditInstanceSummary,
     AuditReadService,
     FleetReportEnvelope,
     InstanceFindingsResponse,
-    ReportSnapshotService,
     SeverityFilter,
-    SnapshotSplitArtifactResponse,
-    SplitSnapshotServiceName,
-    SplitSnapshotSubserviceName,
+    SnapshotArtifactResponse,
     SyncLatestAuditDataResponse,
     SyncTodayAuditDataResponse,
 )
 from infra_auditor.reports.models import SnapshotReport
-from infra_auditor.storage.s3_reader import S3SnapshotObject, S3SnapshotSplitObject
+from infra_auditor.storage.s3_reader import S3ArtifactObject, S3SnapshotObject
 
 READ_ONLY_ANNOTATIONS = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 SYNC_ANNOTATIONS = ToolAnnotations(
@@ -64,25 +62,20 @@ def create_mcp_server(read_service: AuditReadService | None = None) -> MCPServer
         return service.list_instances()
 
     @server.tool(
-        title="List audit snapshots",
+        title="List completed audit runs",
         annotations=READ_ONLY_ANNOTATIONS,
     )
-    def list_audit_snapshots(
+    def list_audit_runs(
         instance_alias: Annotated[str, Field(description="Configured instance alias.")],
-        service_name: Annotated[
-            ReportSnapshotService,
-            Field(description="Approved full snapshot service partition."),
-        ] = DEFAULT_REPORT_SNAPSHOT_SERVICE,
         limit: Annotated[
             int,
             Field(ge=1, le=100, description="Maximum objects to list."),
         ] = 25,
     ) -> list[S3SnapshotObject]:
-        """List full compatibility snapshots for one configured instance."""
+        """List completed schema-2 audit runs for one configured instance."""
 
-        return service.list_snapshots(
+        return service.list_runs(
             instance_alias=instance_alias,
-            service=service_name,
             limit=limit,
         )
 
@@ -92,31 +85,19 @@ def create_mcp_server(read_service: AuditReadService | None = None) -> MCPServer
     )
     def get_latest_instance_report(
         instance_alias: Annotated[str, Field(description="Configured instance alias.")],
-        service_name: Annotated[
-            ReportSnapshotService,
-            Field(description="Approved full snapshot service partition."),
-        ] = DEFAULT_REPORT_SNAPSHOT_SERVICE,
     ) -> SnapshotReport:
         """Load the latest deterministic report for one configured instance."""
 
-        return service.get_latest_instance_report(
-            instance_alias=instance_alias,
-            service=service_name,
-        )
+        return service.get_latest_instance_report(instance_alias=instance_alias)
 
     @server.tool(
         title="Get fleet report",
         annotations=READ_ONLY_ANNOTATIONS,
     )
-    def get_fleet_report(
-        service_name: Annotated[
-            ReportSnapshotService,
-            Field(description="Approved full snapshot service partition."),
-        ] = DEFAULT_REPORT_SNAPSHOT_SERVICE,
-    ) -> FleetReportEnvelope:
+    def get_fleet_report() -> FleetReportEnvelope:
         """Load latest per-instance reports and combine them into a fleet report."""
 
-        return service.get_fleet_report(service=service_name)
+        return service.get_fleet_report()
 
     @server.tool(
         title="Get instance findings",
@@ -147,27 +128,27 @@ def create_mcp_server(read_service: AuditReadService | None = None) -> MCPServer
         )
 
     @server.tool(
-        title="List snapshot split artifacts",
+        title="List audit artifacts",
         annotations=READ_ONLY_ANNOTATIONS,
     )
-    def list_snapshot_split_artifacts(
+    def list_audit_artifacts(
         instance_alias: Annotated[str, Field(description="Configured instance alias.")],
         service_name: Annotated[
-            SplitSnapshotServiceName,
-            Field(description="Approved split service."),
+            ArtifactServiceName,
+            Field(description="Approved artifact service."),
         ],
         subservice_name: Annotated[
-            SplitSnapshotSubserviceName,
-            Field(description="Approved split subservice for the selected service."),
+            ArtifactSubserviceName,
+            Field(description="Approved subservice for the selected service."),
         ],
         limit: Annotated[
             int,
-            Field(ge=1, le=100, description="Maximum split artifacts to list."),
+            Field(ge=1, le=100, description="Maximum artifacts to list."),
         ] = 25,
-    ) -> list[S3SnapshotSplitObject]:
-        """List split raw snapshot artifacts for an approved service boundary."""
+    ) -> list[S3ArtifactObject]:
+        """List raw schema-2 artifacts for an approved evidence boundary."""
 
-        return service.list_snapshot_split_artifacts(
+        return service.list_artifacts(
             instance_alias=instance_alias,
             service=service_name,
             subservice=subservice_name,
@@ -175,23 +156,23 @@ def create_mcp_server(read_service: AuditReadService | None = None) -> MCPServer
         )
 
     @server.tool(
-        title="Get latest snapshot split artifact",
+        title="Get latest audit artifact",
         annotations=READ_ONLY_ANNOTATIONS,
     )
-    def get_latest_snapshot_split_artifact(
+    def get_latest_audit_artifact(
         instance_alias: Annotated[str, Field(description="Configured instance alias.")],
         service_name: Annotated[
-            SplitSnapshotServiceName,
-            Field(description="Approved split service."),
+            ArtifactServiceName,
+            Field(description="Approved artifact service."),
         ],
         subservice_name: Annotated[
-            SplitSnapshotSubserviceName,
-            Field(description="Approved split subservice for the selected service."),
+            ArtifactSubserviceName,
+            Field(description="Approved subservice for the selected service."),
         ],
-    ) -> SnapshotSplitArtifactResponse:
-        """Load the latest split raw artifact for an approved service boundary."""
+    ) -> SnapshotArtifactResponse:
+        """Load the latest raw schema-2 artifact for an approved evidence boundary."""
 
-        return service.get_latest_snapshot_split_artifact(
+        return service.get_latest_artifact(
             instance_alias=instance_alias,
             service=service_name,
             subservice=subservice_name,
@@ -226,7 +207,8 @@ def create_mcp_server(read_service: AuditReadService | None = None) -> MCPServer
             Field(
                 description=(
                     "Optional configured instance alias. When omitted, syncs all configured "
-                    "instances that do not already have a snapshot for the current UTC day."
+                    "instances that do not already have a completion manifest for the "
+                    "current UTC day."
                 )
             ),
         ] = None,

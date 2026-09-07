@@ -41,21 +41,25 @@ SYS_ENV=dev  -> infra-audit-rl-dev
 SYS_ENV=prod -> infra-audit-rl-prod
 ```
 
-Snapshot keys use:
+Canonical instance-scoped artifact keys use:
 
 ```text
-raw/snapshots/snapshot_schema=<version>/env=<SYS_ENV>/region=<region>/service=rds-postgres/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+raw/snapshots/schema=2/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
-Each collection also writes split raw artifacts for approved RDS, PostgreSQL,
-and deterministic-finding boundaries:
+Each completed instance collection writes a small manifest last:
 
 ```text
-raw/snapshots/artifact_schema=<version>/snapshot_schema=<version>/env=<SYS_ENV>/region=<region>/service=<service>/subservice=<subservice>/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+raw/snapshots/schema=2/env=<SYS_ENV>/service=audit/region=<region>/instance=<alias>/subservice=run-manifest/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 Current RDS subservices include RDS instance metadata, RDS operations, attached
 security group ingress, and CloudWatch RDS metric summaries.
+
+The manifest contains metadata and artifact keys, not duplicated evidence.
+Schema-1 compatibility snapshots are unsupported. Future non-instance services
+omit `instance`, use `region=global` for non-regional evidence, and use
+`subservice=overview` when no narrower boundary exists.
 
 ## Resource Registry
 
@@ -162,6 +166,6 @@ uv run infra-auditor mcp
 ```
 
 The MCP server uses the same settings and resource registry as the UI. It reads
-approved S3 snapshot/report data for configured instances only and may run the
+approved S3 artifact/report data for configured instances only and may run the
 existing read-only collector workflow through `sync_latest_audit_data` or
 `sync_today_audit_data`.

@@ -21,14 +21,15 @@ snapshot/report data with controlled latest-data and today-data sync.
 - Collect PostgreSQL role attributes and role memberships.
 - Produce deterministic findings for public exposure, RDS operations, resource
   pressure, connection hygiene, and risky role membership paths.
-- Write a minimal versioned JSON snapshot to `s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/...`.
-- Write split raw JSON artifacts for RDS, PostgreSQL, and
-  deterministic-finding boundaries under `raw/snapshots/artifact_schema=...`.
+- Write canonical schema-2 JSON artifacts for RDS, PostgreSQL, and
+  deterministic-finding boundaries under `raw/snapshots/schema=2/...`.
+- Write a small completion manifest last so reports consume one coherent run
+  without duplicating the full evidence payload.
 - Build deterministic snapshot/fleet report summaries and serve a local
   FastAPI report console with RDS, Database (PG), Reports, Raw Data, and planned
   service sections.
 - Expose local MCP tools over configured instances, latest reports, findings,
-  snapshot listings, split artifacts, and controlled latest/today-data sync.
+  completed-run listings, canonical artifacts, and controlled latest/today-data sync.
 
 ## Setup
 

@@ -307,7 +307,7 @@ runtime.
 ## DEC-0010 - S3 raw JSON snapshots with SYS_ENV-derived buckets
 
 Date: 2026-09-03
-Status: Accepted
+Status: Superseded by DEC-0019
 
 ### Scope / Module
 config, storage, cli, snapshots, aws
@@ -627,7 +627,7 @@ hosting is implemented.
 ## DEC-0017 - Split raw S3 artifacts and add constrained MCP tools
 
 Date: 2026-09-04
-Status: Accepted
+Status: Superseded by DEC-0019
 
 ### Scope / Module
 storage, models, reports, mcp, cli, docs
@@ -708,3 +708,97 @@ command is a local stdio server, not a hosted HTTP service.
 When the UI/report path reads split artifacts directly, when report caching or
 latest-state indexes are added, or when hosted/authenticated MCP exposure is
 designed.
+
+
+## DEC-0018 - Scope console history to the selected evidence boundary
+
+Date: 2026-09-07
+Status: Superseded in storage/report details by DEC-0019
+
+Service filter options and view selection share the same scoped listing. RDS and
+Database reports use only full snapshots whose date/timestamp also exists in the
+selected split partition. Raw split views list that partition directly. This
+prevents unrelated subservice history from appearing while preserving the current
+full-snapshot report builder. Pre-split history remains accessible through Raw
+Data / Full snapshot; listings retain the existing newest-50 limit.
+
+A read-only filter-options endpoint validates configured servers and approved
+service/subservice choices. The browser cancels stale requests and waits for
+valid dependent options before enabling Apply. An old key cannot bypass the
+current listing. No collector, credential, or remediation boundary changes.
+
+Global Sync all moves to the sidebar; service Sync now moves to the service
+heading row and retains the existing whole-server collector workflow. The sidebar
+project block shows the environment value and derived snapshot bucket without
+changing their configuration boundary. Collector-specific sync remains deferred.
+
+## DEC-0019 - Canonical schema-2 evidence artifacts with run manifests
+
+Date: 2026-09-07
+Status: Accepted
+
+### Scope / Module
+storage, models, reports, UI, MCP, sync, documentation
+
+### Decision
+Replace the transitional full-snapshot-plus-splits layout with canonical
+schema-2 evidence artifacts only. Every instance collection writes eight
+service/subservice artifacts followed by one small run manifest. The manifest
+contains identity, status, and artifact references but no duplicated evidence;
+because it is written last, its presence marks a complete, coherent run.
+
+Canonical instance-scoped artifact keys use:
+
+```text
+raw/snapshots/schema=2/env=<env>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+```
+
+Run manifests use the same ordering under
+`service=audit/subservice=run-manifest`. Future non-instance services omit the
+`instance` partition, use `region=global` for non-regional evidence, and use a
+meaningful `subservice=overview` when no narrower boundary exists.
+
+The in-memory `AuditSnapshot` remains a collector/report assembly type but is
+not persisted. Reports reconstruct it from the artifact references in one
+manifest. Raw Data reads one artifact directly. The report UI and MCP no longer
+accept the obsolete `rds-postgres` compatibility service or expose full-snapshot
+listing tools. Schema-1 paths are intentionally unsupported before alpha.
+
+### Rationale / Why
+The former compatibility snapshot duplicated almost all split evidence and
+required two independent schema segments. The service-aware UI, MCP, and report
+contracts now justify making the split boundaries authoritative. One schema
+partition safely separates incompatible persisted contracts, while service-first
+ordering supports service ownership and region/instance/subservice navigation.
+The manifest preserves coherent report assembly without storing evidence twice.
+
+### Alternatives considered
+- Keep dual writes until production.
+- Remove schema versioning entirely.
+- Reuse the service name as a placeholder subservice.
+- Read whichever latest artifact exists for each subservice without run coherence.
+
+### Trade-offs & constraints
+Schema-1 objects are no longer readable by current code and may be deleted after
+schema-2 collection is validated. A report read loads a small manifest plus its
+referenced artifacts. Independent subservice collection remains a later runtime
+optimization; current sync still runs the complete read-only instance workflow.
+Future Parquet/Glue/Athena tables may use a separate curated hierarchy optimized
+for homogeneous table schemas.
+
+### Security implications
+The approved `raw/snapshots/*` IAM boundary is unchanged. Manifests contain only
+audit metadata and approved object keys. Before reading referenced objects, the
+reader verifies the complete approved boundary set and recalculates every exact
+key from the manifest identity. There is still no arbitrary S3 prefix, SQL, AWS
+action, secret, query-text, or remediation interface.
+
+### Operational implications
+Writers require the same append-only `PutObject` permission. Readers list run
+manifests or fixed artifact prefixes and read only manifest-referenced keys.
+Today sync checks for a current-day manifest rather than nine independent legacy
+prefixes.
+
+### Future reconsideration trigger
+When production requires schema migration compatibility, independently scheduled
+subservice collectors, a latest-state index, or curated Parquet/Athena storage.

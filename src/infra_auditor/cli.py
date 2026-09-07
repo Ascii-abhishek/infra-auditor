@@ -156,7 +156,7 @@ def collect(
     )
     typer.echo(f"Databases discovered: {len(instance_snapshot.databases)}")
     typer.echo(f"Findings: {len(instance_snapshot.findings)}")
-    typer.echo(f"Snapshot: {result.snapshot_uri}")
+    typer.echo(f"Manifest: {result.manifest_uri}")
     typer.echo(f"Status: {snapshot.metadata.status}")
 
     if snapshot.metadata.status == CollectionStatus.FAILED:

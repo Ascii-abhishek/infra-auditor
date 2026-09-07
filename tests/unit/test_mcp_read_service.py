@@ -14,41 +14,41 @@ from infra_auditor.models.snapshot_split import (
     SnapshotSplitSubservice,
     build_snapshot_split_artifacts,
 )
-from infra_auditor.storage.s3_reader import S3SnapshotObject, S3SnapshotSplitObject
+from infra_auditor.storage.s3_reader import S3ArtifactObject, S3SnapshotObject
 from infra_auditor.sync import AuditSyncAction, AuditSyncMode
 from infra_auditor.workflows import SnapshotWriteResult
 
 
 class FakeReader:
-    def __init__(self, snapshot: AuditSnapshot, *, split_objects_exist: bool = True) -> None:
+    def __init__(self, snapshot: AuditSnapshot, *, manifests_exist: bool = True) -> None:
         self.snapshot = snapshot
-        self.split_objects_exist = split_objects_exist
+        self.manifests_exist = manifests_exist
         self.object = S3SnapshotObject(
             bucket="infra-audit-rl-dev",
             key=(
-                "raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/"
-                "service=rds-postgres/instance=db/dt=2026-09-04/20260904T070000Z.json"
+                "raw/snapshots/schema=2/env=dev/service=audit/region=ap-south-1/"
+                "instance=db/subservice=run-manifest/dt=2026-09-04/20260904T070000Z.json"
             ),
             uri=(
-                "s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/"
-                "region=ap-south-1/service=rds-postgres/instance=db/dt=2026-09-04/"
+                "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/service=audit/"
+                "region=ap-south-1/instance=db/subservice=run-manifest/dt=2026-09-04/"
                 "20260904T070000Z.json"
             ),
             size_bytes=100,
             last_modified=datetime(2026, 9, 4, 7, 0, tzinfo=UTC),
         )
         self.split_artifact = build_snapshot_split_artifacts(snapshot)[7]
-        self.split_object = S3SnapshotSplitObject(
+        self.split_object = S3ArtifactObject(
             bucket="infra-audit-rl-dev",
             key=(
-                "raw/snapshots/artifact_schema=1/snapshot_schema=1/env=dev/"
-                "region=ap-south-1/service=audit-heuristics/subservice=deterministic-findings/"
-                "instance=db/dt=2026-09-04/20260904T070000Z.json"
+                "raw/snapshots/schema=2/env=dev/service=audit-heuristics/"
+                "region=ap-south-1/instance=db/subservice=deterministic-findings/"
+                "dt=2026-09-04/20260904T070000Z.json"
             ),
             uri=(
-                "s3://infra-audit-rl-dev/raw/snapshots/artifact_schema=1/"
-                "snapshot_schema=1/env=dev/region=ap-south-1/service=audit-heuristics/"
-                "subservice=deterministic-findings/instance=db/"
+                "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/"
+                "service=audit-heuristics/region=ap-south-1/instance=db/"
+                "subservice=deterministic-findings/"
                 "dt=2026-09-04/20260904T070000Z.json"
             ),
             size_bytes=50,
@@ -58,25 +58,23 @@ class FakeReader:
         )
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def list_snapshots(self, **kwargs: Any) -> list[S3SnapshotObject]:
-        self.calls.append(("list_snapshots", kwargs))
-        return [self.object]
+    def list_manifests(self, **kwargs: Any) -> list[S3SnapshotObject]:
+        self.calls.append(("list_manifests", kwargs))
+        return [self.object] if self.manifests_exist else []
 
     def read_latest_snapshot(self, **kwargs: Any) -> tuple[S3SnapshotObject, AuditSnapshot]:
         self.calls.append(("read_latest_snapshot", kwargs))
         return self.object, self.snapshot
 
-    def list_snapshot_split_artifacts(self, **kwargs: Any) -> list[S3SnapshotSplitObject]:
-        self.calls.append(("list_snapshot_split_artifacts", kwargs))
-        if not self.split_objects_exist:
-            return []
+    def list_artifacts(self, **kwargs: Any) -> list[S3ArtifactObject]:
+        self.calls.append(("list_artifacts", kwargs))
         return [self.split_object]
 
-    def read_latest_snapshot_split_artifact(
+    def read_latest_artifact(
         self,
         **kwargs: Any,
-    ) -> tuple[S3SnapshotSplitObject, object]:
-        self.calls.append(("read_latest_snapshot_split_artifact", kwargs))
+    ) -> tuple[S3ArtifactObject, object]:
+        self.calls.append(("read_latest_artifact", kwargs))
         return self.split_object, self.split_artifact
 
 
@@ -90,10 +88,10 @@ def test_audit_read_service_exposes_configured_reports_and_splits() -> None:
     assert [instance.alias for instance in service.list_instances()] == ["db"]
 
     boundary = service.describe_data_boundary()
-    assert boundary.report_snapshot_services == ["rds-postgres"]
-    assert boundary.split_snapshot_services["audit-heuristics"] == ["deterministic-findings"]
-    assert "rds" in boundary.split_snapshot_services
-    assert "cloudwatch-rds-metrics" in boundary.split_snapshot_services["rds"]
+    assert boundary.completed_run_manifests is True
+    assert boundary.artifact_services["audit-heuristics"] == ["deterministic-findings"]
+    assert "rds" in boundary.artifact_services
+    assert "cloudwatch-rds-metrics" in boundary.artifact_services["rds"]
     assert "generic SQL execution" in boundary.forbidden_capabilities
 
     fleet = service.get_fleet_report()
@@ -102,12 +100,12 @@ def test_audit_read_service_exposes_configured_reports_and_splits() -> None:
     findings = service.get_instance_findings(instance_alias="db", severity="HIGH")
     assert [finding.rule_id for finding in findings.findings] == ["SEC002"]
 
-    split_objects = service.list_snapshot_split_artifacts(
+    split_objects = service.list_artifacts(
         instance_alias="db",
         service="audit-heuristics",
         subservice="deterministic-findings",
     )
-    split = service.get_latest_snapshot_split_artifact(
+    split = service.get_latest_artifact(
         instance_alias="db",
         service="audit-heuristics",
         subservice="deterministic-findings",
@@ -138,7 +136,7 @@ def test_sync_latest_audit_data_uses_configured_collection_workflow(
         calls.append(str(kwargs["alias"]))
         return SnapshotWriteResult(
             snapshot=snapshot,
-            snapshot_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
+            manifest_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
         )
 
     monkeypatch.setattr(
@@ -171,7 +169,7 @@ def test_sync_today_audit_data_skips_when_latest_snapshot_is_today(
         calls.append(str(kwargs["alias"]))
         return SnapshotWriteResult(
             snapshot=snapshot,
-            snapshot_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
+            manifest_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
         )
 
     monkeypatch.setattr(
@@ -193,10 +191,10 @@ def test_sync_today_audit_data_skips_when_latest_snapshot_is_today(
     assert calls == []
     assert response.mode == AuditSyncMode.TODAY
     assert response.results[0].action == AuditSyncAction.SKIPPED
-    assert response.results[0].snapshot_uri.startswith("s3://infra-audit-rl-dev/")
+    assert response.results[0].manifest_uri.startswith("s3://infra-audit-rl-dev/")
 
 
-def test_sync_today_audit_data_collects_when_today_split_artifacts_are_missing(
+def test_sync_today_audit_data_collects_when_today_manifest_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot = _snapshot()
@@ -206,7 +204,7 @@ def test_sync_today_audit_data_collects_when_today_split_artifacts_are_missing(
         calls.append(str(kwargs["alias"]))
         return SnapshotWriteResult(
             snapshot=snapshot,
-            snapshot_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
+            manifest_uri="s3://infra-audit-rl-dev/raw/snapshots/example.json",
         )
 
     monkeypatch.setattr(
@@ -220,7 +218,7 @@ def test_sync_today_audit_data_collects_when_today_split_artifacts_are_missing(
     service = AuditReadService(
         settings=AppSettings(_env_file=None),
         resource_config=_resource_config(),
-        reader=FakeReader(snapshot, split_objects_exist=False),
+        reader=FakeReader(snapshot, manifests_exist=False),
     )
 
     response = service.sync_today_audit_data()

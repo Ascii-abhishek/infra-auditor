@@ -228,8 +228,8 @@ def test_collect_instance_snapshot_success_and_s3_write() -> None:
     uri = S3SnapshotWriter(client, settings.snapshot_bucket).write(snapshot)
 
     assert uri.startswith(
-        "s3://infra-audit-rl-dev/raw/snapshots/snapshot_schema=1/env=dev/"
-        "region=ap-south-1/service=rds-postgres/instance=raptor-catalog/dt="
+        "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/service=audit/"
+        "region=ap-south-1/instance=raptor-catalog/subservice=run-manifest/dt="
     )
     assert len(client.put_object_calls) == 9
     put_object = client.put_object_calls[0]
@@ -239,39 +239,50 @@ def test_collect_instance_snapshot_success_and_s3_write() -> None:
     assert put_object["IfNoneMatch"] == "*"
     assert put_object["Metadata"]["run-id"] == "run-123"
     assert put_object["Key"].startswith(
-        "raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/"
-        "service=rds-postgres/instance=raptor-catalog/dt="
+        "raw/snapshots/schema=2/env=dev/service=rds/region=ap-south-1/"
+        "instance=raptor-catalog/subservice=instance/dt="
     )
-    split_keys = [call["Key"] for call in client.put_object_calls[1:]]
+    split_keys = [call["Key"] for call in client.put_object_calls[:-1]]
     assert any(
-        "service=rds/subservice=instance/instance=raptor-catalog" in key for key in split_keys
-    )
-    assert any(
-        "service=rds/subservice=operations/instance=raptor-catalog" in key for key in split_keys
-    )
-    assert any(
-        "service=postgres/subservice=database-inventory/instance=raptor-catalog" in key
+        "service=rds/region=ap-south-1/instance=raptor-catalog/subservice=instance" in key
         for key in split_keys
     )
     assert any(
-        "service=postgres/subservice=activity-summary/instance=raptor-catalog" in key
+        "service=rds/region=ap-south-1/instance=raptor-catalog/subservice=operations" in key
         for key in split_keys
     )
     assert any(
-        "service=postgres/subservice=role-security/instance=raptor-catalog" in key
+        "service=postgres/region=ap-south-1/instance=raptor-catalog/"
+        "subservice=database-inventory" in key
         for key in split_keys
     )
     assert any(
-        "service=rds/subservice=ec2-security-groups/instance=raptor-catalog" in key
+        "service=postgres/region=ap-south-1/instance=raptor-catalog/"
+        "subservice=activity-summary" in key
         for key in split_keys
     )
     assert any(
-        "service=rds/subservice=cloudwatch-rds-metrics/instance=raptor-catalog" in key
+        "service=postgres/region=ap-south-1/instance=raptor-catalog/subservice=role-security" in key
         for key in split_keys
     )
     assert any(
-        "service=audit-heuristics/subservice=deterministic-findings/instance=raptor-catalog" in key
+        "service=rds/region=ap-south-1/instance=raptor-catalog/"
+        "subservice=ec2-security-groups" in key
         for key in split_keys
+    )
+    assert any(
+        "service=rds/region=ap-south-1/instance=raptor-catalog/"
+        "subservice=cloudwatch-rds-metrics" in key
+        for key in split_keys
+    )
+    assert any(
+        "service=audit-heuristics/region=ap-south-1/instance=raptor-catalog/"
+        "subservice=deterministic-findings" in key
+        for key in split_keys
+    )
+    assert client.put_object_calls[-1]["Key"].startswith(
+        "raw/snapshots/schema=2/env=dev/service=audit/region=ap-south-1/"
+        "instance=raptor-catalog/subservice=run-manifest/dt="
     )
     assert all(b"fake-password" not in call["Body"] for call in client.put_object_calls)
 
@@ -296,7 +307,7 @@ def test_s3_writer_rejects_snapshot_key_collision() -> None:
 
     writer = S3SnapshotWriter(ConflictS3Client(), settings.snapshot_bucket)
 
-    with pytest.raises(SnapshotValidationError, match="snapshot already exists in S3"):
+    with pytest.raises(SnapshotValidationError, match="snapshot artifact already exists in S3"):
         writer.write(snapshot)
 
 

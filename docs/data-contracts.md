@@ -5,11 +5,11 @@
 Application version and snapshot schema version are separate:
 
 - `application_version`: semantic project version, currently `0.1.0`.
-- `snapshot_schema_version`: persisted snapshot contract version, currently `1`.
+- `snapshot_schema_version`: evidence family version, currently `2`.
 
 Compatibility changes to persisted models must update this document and usually `decisions.md`.
-The S3 object key also includes `snapshot_schema=<version>` so future Parquet or
-Athena consumers can partition incompatible raw snapshot contracts.
+The S3 object key includes one `schema=2` partition so incompatible persisted
+contracts cannot be mixed. Schema 1 is intentionally unsupported before alpha.
 
 ## Run Metadata
 
@@ -112,24 +112,23 @@ This evidence is cluster-wide and collected through the bootstrap database.
 title, summary, observed values, evidence references, and recommendation. Future
 rules may add expected/policy values and confidence where meaningful.
 
-## Split Raw Snapshot Artifacts
+## Canonical Raw Evidence Artifacts
 
-The full `AuditSnapshot` remains the compatibility artifact for the current
-report path. Each collection also writes split raw artifacts with
-`artifact_schema_version=1` under the same approved raw snapshot root:
+`AuditSnapshot` is the in-memory collector and report assembly type; it is not
+persisted. Each collection writes canonical service/subservice artifacts under:
 
 ```text
-raw/snapshots/artifact_schema=<version>/snapshot_schema=<version>/env=<SYS_ENV>/region=<region>/service=<service>/subservice=<subservice>/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+raw/snapshots/schema=2/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 `SnapshotSplitArtifact` contains:
 
-- split artifact metadata with source run ID, source snapshot schema, source
-  service, split service/subservice, collector boundary, source statuses,
-  boundary status, instance alias, DB instance identifier, and collector names,
+- artifact metadata with schema version, run ID, service/subservice, collector
+  boundary, run/instance/boundary statuses, instance alias, DB instance
+  identifier, timestamps, and collector names,
 - one `SnapshotSplitInstance` containing only the fields owned by that boundary.
 
-Current split boundaries:
+Current artifact boundaries:
 
 - RDS:
   `rds/instance` includes RDS DB instance discovery evidence,
@@ -139,17 +138,26 @@ Current split boundaries:
   includes CloudWatch RDS metric summaries.
 - PostgreSQL:
   `postgres/database-inventory`, `postgres/activity-summary`, and
-  `postgres/role-security` split database inventory, activity summary, and role
+  `postgres/role-security` separate database inventory, activity summary, and role
   security evidence.
 - Audit heuristics:
   `audit-heuristics/deterministic-findings` includes deterministic findings.
 
-Split artifacts must not introduce secret values, unrestricted query text,
+Canonical artifacts must not introduce secret values, unrestricted query text,
 application table rows, generic SQL, arbitrary AWS calls, or remediation data.
+
+## Run Manifest
+
+After every artifact write succeeds, the writer commits a small
+`SnapshotRunManifest` under `service=audit/subservice=run-manifest`. It contains
+the run identity, timestamps, overall status, and the exact approved artifact
+keys/statuses. Readers treat a manifest as the completion marker and reconstruct
+reports only from its referenced family. A failed partial write has no manifest
+and cannot be mistaken for a complete report run.
 
 ## Reports
 
-Report models are derived views over raw snapshots.
+Report models are derived views over manifest-referenced raw artifacts.
 
 `SnapshotReport` summarizes one raw snapshot: severity counts, rule counts,
 collector statuses, top findings, network exposure, RDS operations, CloudWatch
@@ -160,5 +168,5 @@ environment. It contains service, environment, region, generated timestamp,
 combined severity counts, total findings, instance count, and the underlying
 `SnapshotReport` entries.
 
-Reports do not replace raw snapshots. They are the stable reader-facing shape
+Reports do not replace raw artifacts. They are the stable reader-facing shape
 for the local UI and MCP tools.

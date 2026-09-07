@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Replaced transitional full-snapshot plus split-artifact S3 writes with
+  canonical schema-2 service/subservice artifacts and completion manifests.
+- Reworked UI reports, sync completeness, and MCP reads around canonical
+  artifacts; removed schema-1 compatibility paths and composite `rds-postgres`
+  report parameters before alpha.
 - Added AWS security group ingress, CloudWatch RDS metric summary, RDS operations,
   and PostgreSQL activity-summary collectors.
 - Added deterministic findings for public RDS exposure, pending maintenance,

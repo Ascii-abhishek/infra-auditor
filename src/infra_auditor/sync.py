@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from infra_auditor.config import AppSettings, ResourceConfig
 from infra_auditor.exceptions import InfraAuditorError
 from infra_auditor.models.common import CollectionStatus, utc_now
-from infra_auditor.models.snapshot_split import SNAPSHOT_SPLIT_DEFINITIONS
-from infra_auditor.storage.s3 import DEFAULT_SNAPSHOT_SERVICE
 from infra_auditor.storage.s3_reader import S3SnapshotReader
 from infra_auditor.workflows import collect_and_write_instance
 
@@ -35,7 +33,7 @@ class AuditSyncInstanceResult(BaseModel):
     instance_alias: str
     action: AuditSyncAction
     status: CollectionStatus | None = None
-    snapshot_uri: str | None = None
+    manifest_uri: str | None = None
     finding_count: int | None = Field(default=None, ge=0)
     message: str | None = None
     error: str | None = None
@@ -115,7 +113,7 @@ def _sync_one_alias(
         )
 
     if mode == AuditSyncMode.TODAY:
-        existing_uri = _latest_complete_snapshot_family_uri_for_date(
+        existing_uri = _latest_manifest_uri_for_date(
             settings=settings,
             resource_config=resource_config,
             reader=reader,
@@ -126,8 +124,8 @@ def _sync_one_alias(
             return AuditSyncInstanceResult(
                 instance_alias=alias,
                 action=AuditSyncAction.SKIPPED,
-                snapshot_uri=existing_uri,
-                message=f"latest snapshot family already exists for UTC day {today}",
+                manifest_uri=existing_uri,
+                message=f"completed artifact family already exists for UTC day {today}",
             )
 
     try:
@@ -148,41 +146,13 @@ def _sync_one_alias(
         instance_alias=alias,
         action=AuditSyncAction.COLLECTED,
         status=result.snapshot.metadata.status,
-        snapshot_uri=result.snapshot_uri,
+        manifest_uri=result.manifest_uri,
         finding_count=len(instance.findings) if instance is not None else 0,
-        message="collected latest read-only audit snapshot",
+        message="collected latest read-only audit artifact family",
     )
 
 
-def _latest_complete_snapshot_family_uri_for_date(
-    *,
-    settings: AppSettings,
-    resource_config: ResourceConfig,
-    reader: S3SnapshotReader,
-    alias: str,
-    date: str,
-) -> str | None:
-    snapshot_uri = _latest_snapshot_uri_for_date(
-        settings=settings,
-        resource_config=resource_config,
-        reader=reader,
-        alias=alias,
-        date=date,
-    )
-    if snapshot_uri is None:
-        return None
-    if not _latest_split_artifacts_exist_for_date(
-        settings=settings,
-        resource_config=resource_config,
-        reader=reader,
-        alias=alias,
-        date=date,
-    ):
-        return None
-    return snapshot_uri
-
-
-def _latest_snapshot_uri_for_date(
+def _latest_manifest_uri_for_date(
     *,
     settings: AppSettings,
     resource_config: ResourceConfig,
@@ -192,10 +162,9 @@ def _latest_snapshot_uri_for_date(
 ) -> str | None:
     region = resource_config.region_for_instance(alias)
     try:
-        objects = reader.list_snapshots(
+        objects = reader.list_manifests(
             environment=settings.environment,
             region=region,
-            service=DEFAULT_SNAPSHOT_SERVICE,
             instance_alias=alias,
             limit=1,
         )
@@ -204,29 +173,3 @@ def _latest_snapshot_uri_for_date(
     if not objects:
         return None
     return objects[0].uri if f"/dt={date}/" in objects[0].key else None
-
-
-def _latest_split_artifacts_exist_for_date(
-    *,
-    settings: AppSettings,
-    resource_config: ResourceConfig,
-    reader: S3SnapshotReader,
-    alias: str,
-    date: str,
-) -> bool:
-    region = resource_config.region_for_instance(alias)
-    for definition in SNAPSHOT_SPLIT_DEFINITIONS:
-        try:
-            objects = reader.list_snapshot_split_artifacts(
-                environment=settings.environment,
-                region=region,
-                service=definition.service,
-                subservice=definition.subservice,
-                instance_alias=alias,
-                limit=1,
-            )
-        except InfraAuditorError:
-            return False
-        if not objects or f"/dt={date}/" not in objects[0].key:
-            return False
-    return True

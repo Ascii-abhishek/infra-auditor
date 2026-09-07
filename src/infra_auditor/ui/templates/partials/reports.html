@@ -1,7 +1,7 @@
 <div class="page-header">
   <div>
     <h1>Reports</h1>
-    <div class="header-meta">{{ selected_service_label }} · {{ settings.environment }} · {{ settings.aws_region }}</div>
+    <div class="header-meta">Canonical audit artifacts · {{ settings.environment }} · {{ settings.aws_region }}</div>
   </div>
 </div>
 
@@ -62,7 +62,7 @@
             {% for instance in snapshot_report.instances %}
               <tr>
                 <td>
-                  <a href="/?section=rds&service={{ selected_service }}&instance={{ instance.alias }}">
+                  <a href="/?section=rds&instance={{ instance.alias }}">
                     {{ instance.alias }}
                   </a>
                   <div class="table-subtext">{{ snapshot_report.started_at | dt }}</div>
@@ -101,7 +101,7 @@
           {% for item in fleet_findings %}
             <tr>
               <td><span class="badge severity-{{ item.finding.severity.value | lower }}">{{ item.finding.severity.value }}</span></td>
-              <td><a href="/?section=rds&service={{ selected_service }}&instance={{ item.instance_alias }}">{{ item.finding.rule_id }}</a></td>
+              <td><a href="/?section=rds&instance={{ item.instance_alias }}">{{ item.finding.rule_id }}</a></td>
               <td>{{ item.instance_alias }}</td>
               <td>
                 <div class="fw-semibold">{{ item.finding.title }}</div>

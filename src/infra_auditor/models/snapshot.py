@@ -1,6 +1,7 @@
 """Versioned snapshot contracts."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,7 +16,7 @@ from infra_auditor.collectors.postgres.role_security import PostgresRoleSecurity
 from infra_auditor.models.common import CollectionGap, CollectionStatus, CollectorResult
 from infra_auditor.models.finding import Finding
 
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION: Literal[2] = 2
 
 
 class RunMetadata(BaseModel):
@@ -23,7 +24,7 @@ class RunMetadata(BaseModel):
 
     run_id: str
     application_version: str = __version__
-    snapshot_schema_version: int = SNAPSHOT_SCHEMA_VERSION
+    snapshot_schema_version: Literal[2] = SNAPSHOT_SCHEMA_VERSION
     environment: str
     region: str
     started_at: datetime

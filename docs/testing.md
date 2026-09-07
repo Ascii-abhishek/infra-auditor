@@ -25,8 +25,8 @@ Unit tests must not require live AWS or PostgreSQL. Use fakes/stubs/fixtures for
 - RDS operations/configuration describe APIs,
 - Secrets Manager `GetSecretValue`,
 - PostgreSQL connection/cursor behavior,
-- S3 `PutObject` snapshot writes,
-- S3 `ListBucket`/`GetObject` snapshot reads,
+- S3 `PutObject` artifact and completion-manifest writes,
+- S3 `ListBucket`/`GetObject` manifest-constrained artifact reads,
 - report builders, Markdown renderers, service-aware S3 reads, local UI route
   registration, service-section template rendering, and lightweight shell plus
   async `/view` rendering.

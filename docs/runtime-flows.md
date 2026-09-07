@@ -29,8 +29,9 @@ Typer CLI
 -> deterministic AWS/RDS, PostgreSQL activity, and PostgreSQL security rules
 -> AuditSnapshot model
 -> S3SnapshotWriter
--> s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/.../<YYYYMMDDTHHMMSSZ>.json
--> service/subservice artifacts under raw/snapshots/artifact_schema=...
+-> eight canonical schema-2 service/subservice evidence artifacts
+-> run manifest written last as the completion marker
+-> s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=2/.../<YYYYMMDDTHHMMSSZ>.json
 ```
 
 ### Inputs
@@ -47,13 +48,12 @@ Typer CLI
 ### Outputs
 
 - CLI summary with run ID, instance alias, collector status, database count,
-  finding count, snapshot path, and overall status.
+  finding count, manifest path, and overall status.
 - Structured logs to stdout/stderr.
-- S3 JSON snapshot containing run metadata, RDS metadata, AWS network/metric/ops
-  evidence, database inventory, PostgreSQL activity evidence, PostgreSQL role
-  security evidence, deterministic findings, collector statuses, and gaps.
-- S3 JSON split artifacts containing the same run identity but only the approved
-  RDS, PostgreSQL, or deterministic-finding boundary fields.
+- Eight S3 JSON artifacts containing the same run identity and only their
+  approved RDS, PostgreSQL, or deterministic-finding boundary fields.
+- One small manifest indexing the exact artifact family. It is written only
+  after all artifacts succeed and is the sole completed-run marker.
 
 ### Failure Paths
 
@@ -70,18 +70,18 @@ Typer CLI
   `PARTIAL_SUCCESS`.
 - PostgreSQL role security failure keeps earlier evidence, records a
   `postgres.role_security` gap, and returns `PARTIAL_SUCCESS`.
-- Snapshot write failure raises `SnapshotValidationError` and the CLI exits non-zero.
-- Snapshot split write failure also raises `SnapshotValidationError`; the S3
-  operation is intentionally append-only and does not attempt cleanup or
-  overwrite.
+- Artifact or manifest write failure raises `SnapshotValidationError` and the
+  CLI exits non-zero. A partial artifact family has no manifest, so readers do
+  not treat it as a completed run. S3 writes are append-only and do not attempt
+  cleanup or overwrite.
 
 ### Diff Context
 
 Added V0.1 config, logging, AWS discovery, AWS security group ingress,
 CloudWatch RDS metric summaries, RDS operations evidence, Secrets Manager,
 PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
-security, deterministic findings, snapshot, S3 storage, and split raw artifact
-boundaries.
+security, deterministic findings, in-memory snapshot assembly, canonical S3
+artifacts, and completion manifests.
 
 Bypassed/deferred: Parquet, Athena, SES, CloudWatch log collection,
 Performance Insights, LLM analyst, hosted MCP, and remediation.
@@ -137,8 +137,8 @@ Typer CLI
 -> GET / returns lightweight Bootstrap shell and loader
 -> browser fetches GET /view for selected section
 -> boto3 Session
--> S3 ListBucket/GetObject for raw snapshots
--> AuditSnapshot validation
+-> S3 ListBucket/GetObject for canonical manifests and artifacts
+-> manifest-constrained artifact validation and in-memory AuditSnapshot assembly
 -> report builder
 -> selected RDS/Database (PG)/Reports/Raw content, JSON APIs, and Markdown/JSON exports
 ```
@@ -149,32 +149,52 @@ background sync jobs through `POST /sync-jobs`, with status polling at
 entrypoint; the web UI uses background jobs so slow collection shows per-alias
 progress.
 
-The left pane is navigation only. Current live sections are RDS, Database (PG),
+The left pane holds project branding, the current `SYS_ENV` value, the derived
+snapshot bucket name, a full-width global `Sync all` action, and navigation.
+Current live sections are RDS, Database (PG),
 Reports, Raw Data, and Chat. AWS, EC2, Elasticsearch, and Bitbucket are planned
-standalone domains. Runtime selectors and actions live in the right pane. RDS
+standalone domains. Runtime selectors live in the right pane, while instance
+`Sync now` sits at the right edge of the service heading row. RDS
 owns current RDS instance metadata, RDS operations, RDS-attached security group
 ingress, and CloudWatch RDS metric evidence. Database (PG) owns PostgreSQL
 database inventory, activity summaries, and role security evidence. Raw Data can
-show either the full compatibility snapshot or a selected split artifact.
+show a selected canonical artifact.
 
-Service views expose a first control row for subservice, date, and timestamp.
-The default is the latest available object for the selected instance.
+Service navigation chooses the domain; the control row selects server, subservice,
+date, timestamp (UTC), then Apply. Server/subservice/date changes fetch
+`GET /api/filter-options` to refresh dependent options, with inline loaders,
+disabled Apply during loading or empty/error states, cancelled stale requests,
+no-store responses, and restoration of the last visible options after transient
+errors. Versioned static asset URLs prevent an older filter script from surviving
+a console update.
+Apply loads the selected report; changing options alone does not reload it.
+The API validates configured aliases and approved section/subservice combinations.
+RDS/Database/Raw history reads the selected artifact partition directly. Report
+views resolve the corresponding run manifest and reassemble the coherent
+in-memory snapshot from its exact artifact references. Before any referenced
+object is fetched, every key must match the canonical key calculated from the
+manifest and the complete approved boundary set.
+History retains the reader's existing newest-50-object limit per partition.
+
+`Sync now` collects the selected server through the existing full read-only
+workflow; `Sync all` collects all configured servers. Today sync remains available
+through MCP but is no longer a visible UI action. Sync completion returns to the
+shell with fresh filter context.
 
 The sidebar collapse state and light/dark theme preference are stored in browser
 local storage. These are client-only UI preferences.
 
-Snapshot reads are service-aware. The current service is `rds-postgres`, and the
-reader scopes S3 listing to:
+Snapshot reads are boundary-aware and scope S3 listing to:
 
 ```text
-raw/snapshots/snapshot_schema=<version>/env=<env>/region=<region>/service=<service>/instance=<alias>/
+raw/snapshots/schema=2/env=<env>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/
 ```
 
 ### Outputs
 
 - HTML dashboard at `/`.
-- JSON APIs at `/api/snapshots`, `/api/latest-report`, `/api/fleet-report`, and
-  `/api/snapshot`.
+- JSON APIs at `/api/runs`, `/api/latest-report`, `/api/fleet-report`, and
+  `/api/run`.
 - JSON/Markdown exports at `/exports/fleet.*` and `/exports/instance.*`.
 - Health check at `/healthz`.
 
@@ -204,8 +224,9 @@ Typer CLI
 -> AppSettings from INFRA_AUDITOR_* and optional .env
 -> load_resource_config(config/environments.example.yaml)
 -> boto3 Session
--> S3 ListBucket/GetObject for approved raw snapshot prefixes
--> AuditSnapshot or SnapshotSplitArtifact validation
+-> S3 ListBucket/GetObject for approved manifest/artifact prefixes
+-> SnapshotRunManifest and canonical artifact validation
+-> in-memory AuditSnapshot assembly where requested
 -> deterministic report builder where requested
 -> structured MCP tool result
 ```
@@ -214,27 +235,26 @@ Typer CLI
 
 - `describe_audit_data_boundary`
 - `list_audit_instances`
-- `list_audit_snapshots`
+- `list_audit_runs`
 - `get_latest_instance_report`
 - `get_fleet_report`
 - `get_instance_findings`
-- `list_snapshot_split_artifacts`
-- `get_latest_snapshot_split_artifact`
+- `list_audit_artifacts`
+- `get_latest_audit_artifact`
 - `sync_latest_audit_data`
 - `sync_today_audit_data`
 
 ### Inputs
 
 - Process settings and non-secret resource registry.
-- Stored full snapshots under `raw/snapshots/.../service=rds-postgres/...`.
-- Stored split artifacts under fixed `raw/snapshots/artifact_schema=...`
+- Stored manifests and artifacts under fixed `raw/snapshots/schema=2/...`
   service/subservice partitions.
 
 ### Outputs
 
 - MCP structured tool responses containing approved configuration summaries,
-  snapshot object metadata, deterministic report models, finding summaries,
-  split raw artifacts, and controlled sync results.
+  completed-run metadata, deterministic report models, finding summaries,
+  canonical raw artifacts, and controlled sync results.
 
 ### Failure Paths
 
@@ -250,6 +270,6 @@ reads, Secrets Manager reads, query text retrieval, shell command bridges, or
 remediation tools. `sync_latest_audit_data` and `sync_today_audit_data` are
 constrained live collection entrypoints over configured aliases only; they call
 the existing read-only collector workflow and write immutable S3 audit
-artifacts. The today mode checks the latest full snapshot for each alias and
-skips collection only when that object and all current split artifacts are
-already partitioned under the current UTC day.
+artifacts. The today mode checks the latest completed-run manifest for each
+alias and skips collection when one is already partitioned under the current
+UTC day.

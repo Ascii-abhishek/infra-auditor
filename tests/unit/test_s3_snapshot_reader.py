@@ -1,17 +1,26 @@
+import json
 from datetime import UTC, datetime
 from typing import Any
 
-from infra_auditor.models.common import CollectionStatus
+import pytest
+
+from infra_auditor.collectors.postgres.discovery import DatabaseInfo, DatabaseKind
+from infra_auditor.exceptions import SnapshotReadError
+from infra_auditor.models.common import CollectionStatus, CollectorResult
+from infra_auditor.models.finding import Finding, FindingSeverity
 from infra_auditor.models.snapshot import AuditSnapshot, InstanceSnapshot, RunMetadata
 from infra_auditor.models.snapshot_split import (
+    SnapshotArtifactReference,
+    SnapshotRunManifest,
     SnapshotSplitService,
     SnapshotSplitSubservice,
     build_snapshot_split_artifacts,
 )
+from infra_auditor.storage.s3 import build_snapshot_artifact_key, build_snapshot_manifest_key
 from infra_auditor.storage.s3_reader import (
     S3SnapshotReader,
-    build_snapshot_prefix,
-    build_snapshot_split_prefix,
+    build_snapshot_artifact_prefix,
+    build_snapshot_manifest_prefix,
 )
 
 
@@ -25,80 +34,60 @@ class FakeBody:
 
 class FakeS3ReadClient:
     def __init__(self, snapshot: AuditSnapshot) -> None:
-        self.snapshot = snapshot
-        self.list_calls: list[dict[str, Any]] = []
-        self.get_calls: list[dict[str, Any]] = []
-
-    def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
-        self.list_calls.append(kwargs)
-        return {
-            "IsTruncated": False,
-            "Contents": [
-                {
-                    "Key": (
-                        "raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/"
-                        "service=rds-postgres/instance=db/dt=2026-09-03/"
-                        "20260903T120000Z.json"
-                    ),
-                    "Size": 123,
-                    "LastModified": datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
-                }
-            ],
-        }
-
-    def get_object(self, **kwargs: Any) -> dict[str, Any]:
-        self.get_calls.append(kwargs)
-        return {"Body": FakeBody(self.snapshot.model_dump_json())}
-
-
-class FakeS3SplitReadClient:
-    def __init__(self, snapshot: AuditSnapshot) -> None:
-        self.artifact = build_snapshot_split_artifacts(snapshot)[2]
-        self.key = (
-            "raw/snapshots/artifact_schema=1/snapshot_schema=1/env=dev/"
-            "region=ap-south-1/service=postgres/subservice=database-inventory/"
-            "instance=db/dt=2026-09-03/20260903T120000Z.json"
+        artifacts = build_snapshot_split_artifacts(snapshot)
+        references = [
+            SnapshotArtifactReference(
+                service=artifact.metadata.service,
+                subservice=artifact.metadata.subservice,
+                key=build_snapshot_artifact_key(artifact),
+                status=artifact.metadata.status,
+            )
+            for artifact in artifacts
+        ]
+        instance = snapshot.instances[0]
+        self.manifest = SnapshotRunManifest(
+            run_id=snapshot.metadata.run_id,
+            application_version=snapshot.metadata.application_version,
+            environment=snapshot.metadata.environment,
+            region=snapshot.metadata.region,
+            instance_alias=instance.alias,
+            started_at=snapshot.metadata.started_at,
+            completed_at=snapshot.metadata.completed_at,
+            status=snapshot.metadata.status,
+            artifacts=references,
+        )
+        self.manifest_key = build_snapshot_manifest_key(self.manifest)
+        self.payloads = {self.manifest_key: self.manifest.model_dump_json()}
+        self.payloads.update(
+            {
+                reference.key: artifact.model_dump_json()
+                for reference, artifact in zip(references, artifacts, strict=True)
+            }
         )
         self.list_calls: list[dict[str, Any]] = []
         self.get_calls: list[dict[str, Any]] = []
 
     def list_objects_v2(self, **kwargs: Any) -> dict[str, Any]:
         self.list_calls.append(kwargs)
-        return {
-            "IsTruncated": False,
-            "Contents": [
-                {
-                    "Key": self.key,
-                    "Size": 321,
-                    "LastModified": datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
-                }
-            ],
-        }
+        prefix = kwargs["Prefix"]
+        contents = [
+            {
+                "Key": key,
+                "Size": len(payload),
+                "LastModified": datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
+            }
+            for key, payload in self.payloads.items()
+            if key.startswith(prefix)
+        ]
+        return {"IsTruncated": False, "Contents": contents}
 
     def get_object(self, **kwargs: Any) -> dict[str, Any]:
         self.get_calls.append(kwargs)
-        return {"Body": FakeBody(self.artifact.model_dump_json())}
+        return {"Body": FakeBody(self.payloads[kwargs["Key"]])}
 
 
-def test_s3_snapshot_reader_lists_and_reads_latest_snapshot() -> None:
-    snapshot = AuditSnapshot(
-        metadata=RunMetadata(
-            run_id="run-1",
-            environment="dev",
-            region="ap-south-1",
-            started_at=datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
-            completed_at=datetime(2026, 9, 3, 12, 1, tzinfo=UTC),
-            status=CollectionStatus.SUCCESS,
-        ),
-        instances=[
-            InstanceSnapshot(
-                alias="db",
-                db_instance_identifier="database-1",
-                region="ap-south-1",
-                status=CollectionStatus.SUCCESS,
-            )
-        ],
-    )
+def test_reader_reassembles_latest_completed_artifact_family() -> None:
+    snapshot = _snapshot()
     client = FakeS3ReadClient(snapshot)
     reader = S3SnapshotReader(client, "infra-audit-rl-dev")
 
@@ -108,33 +97,55 @@ def test_s3_snapshot_reader_lists_and_reads_latest_snapshot() -> None:
         instance_alias="db",
     )
 
-    assert item.uri.startswith("s3://infra-audit-rl-dev/raw/snapshots/")
-    assert loaded.metadata.run_id == "run-1"
-    assert client.list_calls[0]["Prefix"] == build_snapshot_prefix(
+    assert item.key == client.manifest_key
+    assert loaded == snapshot
+    assert client.list_calls[0]["Prefix"] == build_snapshot_manifest_prefix(
+        environment="dev", region="ap-south-1", instance_alias="db"
+    )
+    assert len(client.get_calls) == 9
+
+
+def test_reader_lists_and_reads_one_canonical_artifact_boundary() -> None:
+    client = FakeS3ReadClient(_snapshot())
+    reader = S3SnapshotReader(client, "infra-audit-rl-dev")
+
+    item, artifact = reader.read_latest_artifact(
         environment="dev",
         region="ap-south-1",
-        service="rds-postgres",
+        service=SnapshotSplitService.POSTGRES,
+        subservice=SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY,
         instance_alias="db",
     )
-    assert client.get_calls == [{"Bucket": "infra-audit-rl-dev", "Key": item.key}]
 
-
-def test_build_snapshot_prefix_is_service_aware() -> None:
-    prefix = build_snapshot_prefix(
+    assert artifact.metadata.service == SnapshotSplitService.POSTGRES
+    assert item.key.startswith(
+        "raw/snapshots/schema=2/env=dev/service=postgres/region=ap-south-1/"
+        "instance=db/subservice=database-inventory/"
+    )
+    assert client.list_calls[0]["Prefix"] == build_snapshot_artifact_prefix(
         environment="dev",
         region="ap-south-1",
-        service="opensearch",
-        instance_alias="search",
-    )
-
-    assert prefix == (
-        "raw/snapshots/snapshot_schema=1/env=dev/region=ap-south-1/"
-        "service=opensearch/instance=search/"
+        service=SnapshotSplitService.POSTGRES,
+        subservice=SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY,
+        instance_alias="db",
     )
 
 
-def test_s3_snapshot_reader_lists_and_reads_split_artifacts() -> None:
-    snapshot = AuditSnapshot(
+def test_reader_rejects_noncanonical_manifest_reference_before_artifact_read() -> None:
+    client = FakeS3ReadClient(_snapshot())
+    payload = client.manifest.model_dump(mode="json")
+    payload["artifacts"][0]["key"] = "unapproved/private-object.json"
+    client.payloads[client.manifest_key] = json.dumps(payload)
+    reader = S3SnapshotReader(client, "infra-audit-rl-dev")
+
+    with pytest.raises(SnapshotReadError, match="canonical run-scoped key"):
+        reader.read_snapshot(client.manifest_key)
+
+    assert client.get_calls == [{"Bucket": "infra-audit-rl-dev", "Key": client.manifest_key}]
+
+
+def _snapshot() -> AuditSnapshot:
+    return AuditSnapshot(
         metadata=RunMetadata(
             run_id="run-1",
             environment="dev",
@@ -149,28 +160,35 @@ def test_s3_snapshot_reader_lists_and_reads_split_artifacts() -> None:
                 db_instance_identifier="database-1",
                 region="ap-south-1",
                 status=CollectionStatus.SUCCESS,
+                databases=[
+                    DatabaseInfo(
+                        name="app_db",
+                        allow_connections=True,
+                        is_template=False,
+                        kind=DatabaseKind.APPLICATION,
+                        connection_eligible=True,
+                    )
+                ],
+                collectors=[
+                    CollectorResult(
+                        name="postgres.database_inventory",
+                        status=CollectionStatus.SUCCESS,
+                        started_at=datetime(2026, 9, 3, 12, 0, tzinfo=UTC),
+                        completed_at=datetime(2026, 9, 3, 12, 1, tzinfo=UTC),
+                        duration_ms=60_000,
+                    )
+                ],
+                findings=[
+                    Finding(
+                        rule_id="SEC002",
+                        fingerprint="fingerprint-1",
+                        category="security/postgres",
+                        severity=FindingSeverity.HIGH,
+                        resource="db/postgres/role/app_user",
+                        title="Role has rds_superuser path",
+                        summary="A login role inherits rds_superuser.",
+                    )
+                ],
             )
         ],
     )
-    client = FakeS3SplitReadClient(snapshot)
-    reader = S3SnapshotReader(client, "infra-audit-rl-dev")
-
-    item, artifact = reader.read_latest_snapshot_split_artifact(
-        environment="dev",
-        region="ap-south-1",
-        service=SnapshotSplitService.POSTGRES,
-        subservice=SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY,
-        instance_alias="db",
-    )
-
-    assert item.service == SnapshotSplitService.POSTGRES
-    assert item.subservice == SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY
-    assert artifact.metadata.service == SnapshotSplitService.POSTGRES
-    assert client.list_calls[0]["Prefix"] == build_snapshot_split_prefix(
-        environment="dev",
-        region="ap-south-1",
-        service=SnapshotSplitService.POSTGRES,
-        subservice=SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY,
-        instance_alias="db",
-    )
-    assert client.get_calls == [{"Bucket": "infra-audit-rl-dev", "Key": item.key}]

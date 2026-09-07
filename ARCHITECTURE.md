@@ -17,9 +17,9 @@ Typer CLI
   -> psycopg PostgreSQL connection factory
   -> deterministic collectors
   -> deterministic rules
-  -> typed snapshot
-  -> S3 JSON snapshot
-  -> split raw S3 artifacts by service/heuristic boundary
+  -> typed in-memory collection result
+  -> canonical schema-2 S3 artifacts by service/subservice boundary
+  -> completion manifest written last
   -> snapshot/fleet report summary
   -> local FastAPI report console
   -> MCP read tools plus controlled latest/today-data sync
@@ -37,7 +37,7 @@ typed snapshot/report -> optional LLM analyst
 - `secrets`: credential-provider boundary, currently AWS Secrets Manager.
 - `collectors.postgres`: PostgreSQL connection and fixed SQL collectors.
 - `models`: versioned evidence, snapshot, and future finding contracts.
-- `storage`: snapshot persistence, currently S3 JSON.
+- `storage`: canonical artifact and manifest persistence, currently S3 JSON.
 - `rules`: deterministic finding logic over normalized evidence.
 - `reports`: deterministic snapshot and fleet report summaries over raw
   snapshots.
@@ -117,34 +117,30 @@ The first MCP layer is implemented as a local stdio server:
 uv run infra-auditor mcp
 ```
 
-It exposes read tools over configured instances, S3 snapshot listings, latest
-deterministic reports, filtered finding summaries, and latest split raw
+It exposes read tools over configured instances, completed-run listings, latest
+deterministic reports, filtered finding summaries, and latest canonical raw
 artifacts. It also exposes `sync_latest_audit_data`, which calls the existing
 read-only collector workflow for configured aliases and writes immutable S3
 audit artifacts, and `sync_today_audit_data`, which skips aliases that already
-have a snapshot for the current UTC day. MCP tools must not expose generic SQL,
+have a completion manifest for the current UTC day. MCP tools must not expose generic SQL,
 arbitrary AWS API calls, arbitrary S3 key reads, secret values, query text,
 shell bridges, or remediation.
 
 ## Storage
 
-V0.1 writes raw JSON snapshots to S3:
+V0.1 writes canonical raw JSON evidence artifacts to S3:
 
 ```text
-s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/snapshot_schema=<version>/env=<dev-or-prod>/region=<region>/service=<service>/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=2/env=<dev-or-prod>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 `SYS_ENV` is `dev` or `prod` and defaults to `dev` when unset. The writer uses
-conditional `PutObject` so an existing snapshot object is not overwritten.
-The current implemented service partition is `rds-postgres`.
+conditional `PutObject` so existing artifacts are not overwritten. A small
+`audit/run-manifest` object is written last for each instance run and references
+the complete artifact family. Full compatibility snapshots are no longer
+persisted. The in-memory aggregate remains available to collectors and reports.
 
-Collections also write service/subservice raw artifacts in parallel under:
-
-```text
-s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/artifact_schema=<version>/snapshot_schema=<version>/env=<dev-or-prod>/region=<region>/service=<service>/subservice=<subservice>/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
-```
-
-The current split services/subservices are:
+The current artifact services/subservices are:
 
 - `rds/instance` for RDS DB instance discovery evidence.
 - `rds/operations` for RDS maintenance, recommendations, and parameter groups.
@@ -154,6 +150,10 @@ The current split services/subservices are:
 - `rds/ec2-security-groups` for attached EC2 security group ingress.
 - `rds/cloudwatch-rds-metrics` for CloudWatch RDS metric summaries.
 - `audit-heuristics/deterministic-findings` for deterministic findings.
+
+Future non-instance services omit `instance`; non-regional evidence uses
+`region=global`, and services without a narrower boundary use
+`subservice=overview`.
 
 Expected future historical storage:
 

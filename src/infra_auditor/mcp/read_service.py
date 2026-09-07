@@ -12,19 +12,18 @@ from infra_auditor.config import AppSettings, ResourceConfig, load_resource_conf
 from infra_auditor.exceptions import ConfigurationError, InfraAuditorError
 from infra_auditor.models.finding import FindingSeverity
 from infra_auditor.models.snapshot_split import (
-    SPLIT_SERVICE_SUBSERVICES,
+    ARTIFACT_SERVICE_SUBSERVICES,
     SnapshotSplitArtifact,
     SnapshotSplitService,
     SnapshotSplitSubservice,
-    split_definition_for,
+    artifact_definition_for,
 )
 from infra_auditor.reports import build_fleet_report, build_snapshot_report
 from infra_auditor.reports.models import FindingReportItem, FleetReport, SnapshotReport
-from infra_auditor.storage.s3 import DEFAULT_SNAPSHOT_SERVICE
 from infra_auditor.storage.s3_reader import (
+    S3ArtifactObject,
     S3SnapshotObject,
     S3SnapshotReader,
-    S3SnapshotSplitObject,
 )
 from infra_auditor.sync import (
     AuditSyncInstanceResult,
@@ -33,9 +32,8 @@ from infra_auditor.sync import (
     sync_audit_data,
 )
 
-ReportSnapshotService = Literal["rds-postgres"]
-SplitSnapshotServiceName = Literal["rds", "postgres", "audit-heuristics"]
-SplitSnapshotSubserviceName = Literal[
+ArtifactServiceName = Literal["rds", "postgres", "audit-heuristics"]
+ArtifactSubserviceName = Literal[
     "instance",
     "operations",
     "database-inventory",
@@ -46,8 +44,6 @@ SplitSnapshotSubserviceName = Literal[
     "deterministic-findings",
 ]
 SeverityFilter = Literal["all", "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
-DEFAULT_REPORT_SNAPSHOT_SERVICE: ReportSnapshotService = "rds-postgres"
-
 MAX_LIST_LIMIT = 100
 MAX_FINDINGS_LIMIT = 250
 REPORT_FINDINGS_LIMIT = 500
@@ -84,8 +80,8 @@ class InstanceFindingsResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SnapshotSplitArtifactResponse(BaseModel):
-    """Latest split raw snapshot artifact with source location."""
+class SnapshotArtifactResponse(BaseModel):
+    """Latest canonical raw evidence artifact with source location."""
 
     source_uri: str
     artifact: SnapshotSplitArtifact
@@ -101,8 +97,8 @@ type SyncTodayAuditDataResponse = AuditSyncResult
 class AuditDataBoundary(BaseModel):
     """Static MCP data-access boundary advertised to hosts and operators."""
 
-    report_snapshot_services: list[str]
-    split_snapshot_services: dict[str, list[str]]
+    artifact_services: dict[str, list[str]]
+    completed_run_manifests: bool
     forbidden_capabilities: list[str]
     controlled_sync_capability: str
 
@@ -140,11 +136,11 @@ class AuditReadService:
         """Describe the intentionally narrow MCP data boundary."""
 
         return AuditDataBoundary(
-            report_snapshot_services=[DEFAULT_SNAPSHOT_SERVICE],
-            split_snapshot_services={
+            artifact_services={
                 service.value: [subservice.value for subservice in subservices]
-                for service, subservices in SPLIT_SERVICE_SUBSERVICES.items()
+                for service, subservices in ARTIFACT_SERVICE_SUBSERVICES.items()
             },
+            completed_run_manifests=True,
             forbidden_capabilities=[
                 "generic SQL execution",
                 "arbitrary AWS API calls",
@@ -156,9 +152,9 @@ class AuditReadService:
             controlled_sync_capability=(
                 "sync_latest_audit_data and sync_today_audit_data may run the "
                 "existing read-only collector for configured aliases and write "
-                "immutable S3 audit artifacts; the today mode skips aliases that "
-                "already have a full snapshot and all current split artifacts "
-                "for the current UTC day"
+                "immutable schema-2 S3 artifacts and writes a run manifest last; "
+                "the today mode skips aliases with a completed manifest for the "
+                "current UTC day"
             ),
         )
 
@@ -174,21 +170,18 @@ class AuditReadService:
             for alias, instance in self._resource_config.instances.items()
         ]
 
-    def list_snapshots(
+    def list_runs(
         self,
         *,
         instance_alias: str,
-        service: ReportSnapshotService = DEFAULT_REPORT_SNAPSHOT_SERVICE,
         limit: int = 25,
     ) -> list[S3SnapshotObject]:
-        """List full compatibility snapshots for one configured instance."""
+        """List completed canonical audit runs for one configured instance."""
 
-        self._validate_report_service(service)
         region = self._region_for_instance(instance_alias)
-        return self._reader.list_snapshots(
+        return self._reader.list_manifests(
             environment=self._settings.environment,
             region=region,
-            service=service,
             instance_alias=instance_alias,
             limit=_bounded_limit(limit, MAX_LIST_LIMIT),
         )
@@ -197,16 +190,13 @@ class AuditReadService:
         self,
         *,
         instance_alias: str,
-        service: ReportSnapshotService = DEFAULT_REPORT_SNAPSHOT_SERVICE,
     ) -> SnapshotReport:
         """Load the latest deterministic report for one configured instance."""
 
-        self._validate_report_service(service)
         region = self._region_for_instance(instance_alias)
         item, snapshot = self._reader.read_latest_snapshot(
             environment=self._settings.environment,
             region=region,
-            service=service,
             instance_alias=instance_alias,
         )
         return build_snapshot_report(
@@ -215,14 +205,9 @@ class AuditReadService:
             top_findings_limit=REPORT_FINDINGS_LIMIT,
         )
 
-    def get_fleet_report(
-        self,
-        *,
-        service: ReportSnapshotService = DEFAULT_REPORT_SNAPSHOT_SERVICE,
-    ) -> FleetReportEnvelope:
+    def get_fleet_report(self) -> FleetReportEnvelope:
         """Load latest per-instance reports and combine them into a fleet report."""
 
-        self._validate_report_service(service)
         reports: list[SnapshotReport] = []
         errors: dict[str, str] = {}
         for alias in self._resource_config.instances:
@@ -231,7 +216,6 @@ class AuditReadService:
                 item, snapshot = self._reader.read_latest_snapshot(
                     environment=self._settings.environment,
                     region=region,
-                    service=service,
                     instance_alias=alias,
                 )
             except InfraAuditorError as exc:
@@ -248,7 +232,7 @@ class AuditReadService:
         report = (
             build_fleet_report(
                 reports,
-                service=service,
+                service="audit",
                 environment=self._settings.environment,
                 region=self._settings.aws_region,
             )
@@ -285,50 +269,50 @@ class AuditReadService:
             findings=findings,
         )
 
-    def list_snapshot_split_artifacts(
+    def list_artifacts(
         self,
         *,
         instance_alias: str,
-        service: SplitSnapshotServiceName,
-        subservice: SplitSnapshotSubserviceName,
+        service: ArtifactServiceName,
+        subservice: ArtifactSubserviceName,
         limit: int = 25,
-    ) -> list[S3SnapshotSplitObject]:
-        """List split raw snapshot artifacts for an approved service boundary."""
+    ) -> list[S3ArtifactObject]:
+        """List canonical raw artifacts for an approved evidence boundary."""
 
-        split_service = SnapshotSplitService(service)
-        split_subservice = SnapshotSplitSubservice(subservice)
-        _validate_split_definition(split_service, split_subservice)
+        artifact_service = SnapshotSplitService(service)
+        artifact_subservice = SnapshotSplitSubservice(subservice)
+        _validate_artifact_definition(artifact_service, artifact_subservice)
         region = self._region_for_instance(instance_alias)
-        return self._reader.list_snapshot_split_artifacts(
+        return self._reader.list_artifacts(
             environment=self._settings.environment,
             region=region,
-            service=split_service,
-            subservice=split_subservice,
+            service=artifact_service,
+            subservice=artifact_subservice,
             instance_alias=instance_alias,
             limit=_bounded_limit(limit, MAX_LIST_LIMIT),
         )
 
-    def get_latest_snapshot_split_artifact(
+    def get_latest_artifact(
         self,
         *,
         instance_alias: str,
-        service: SplitSnapshotServiceName,
-        subservice: SplitSnapshotSubserviceName,
-    ) -> SnapshotSplitArtifactResponse:
-        """Load the latest split raw artifact for an approved service boundary."""
+        service: ArtifactServiceName,
+        subservice: ArtifactSubserviceName,
+    ) -> SnapshotArtifactResponse:
+        """Load the latest raw artifact for an approved evidence boundary."""
 
-        split_service = SnapshotSplitService(service)
-        split_subservice = SnapshotSplitSubservice(subservice)
-        _validate_split_definition(split_service, split_subservice)
+        artifact_service = SnapshotSplitService(service)
+        artifact_subservice = SnapshotSplitSubservice(subservice)
+        _validate_artifact_definition(artifact_service, artifact_subservice)
         region = self._region_for_instance(instance_alias)
-        item, artifact = self._reader.read_latest_snapshot_split_artifact(
+        item, artifact = self._reader.read_latest_artifact(
             environment=self._settings.environment,
             region=region,
-            service=split_service,
-            subservice=split_subservice,
+            service=artifact_service,
+            subservice=artifact_subservice,
             instance_alias=instance_alias,
         )
-        return SnapshotSplitArtifactResponse(source_uri=item.uri, artifact=artifact)
+        return SnapshotArtifactResponse(source_uri=item.uri, artifact=artifact)
 
     def sync_latest_audit_data(
         self,
@@ -365,11 +349,6 @@ class AuditReadService:
             raise ConfigurationError(f"unknown instance alias: {alias}")
         return self._resource_config.region_for_instance(alias)
 
-    @staticmethod
-    def _validate_report_service(service: str) -> None:
-        if service != DEFAULT_SNAPSHOT_SERVICE:
-            raise ConfigurationError(f"unsupported report snapshot service: {service}")
-
 
 def _bounded_limit(value: int, maximum: int) -> int:
     if value < 1:
@@ -377,13 +356,13 @@ def _bounded_limit(value: int, maximum: int) -> int:
     return min(value, maximum)
 
 
-def _validate_split_definition(
+def _validate_artifact_definition(
     service: SnapshotSplitService,
     subservice: SnapshotSplitSubservice,
 ) -> None:
     try:
-        split_definition_for(service, subservice)
+        artifact_definition_for(service, subservice)
     except KeyError as exc:
         raise ConfigurationError(
-            f"unsupported split artifact service/subservice: {service.value}/{subservice.value}"
+            f"unsupported artifact service/subservice: {service.value}/{subservice.value}"
         ) from exc

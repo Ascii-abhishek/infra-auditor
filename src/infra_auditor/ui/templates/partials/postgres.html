@@ -3,6 +3,7 @@
     <h1>Database (PG)</h1>
     <div class="header-meta">{{ selected_instance }} · {{ selected_subservice_label }} · {{ selected_database }} · {{ selected_date or "latest" }} · {{ selected_timestamp or "latest" }}</div>
   </div>
+  {% include "partials/sync_now.html" %}
 </div>
 
 {% include "partials/controls.html" %}

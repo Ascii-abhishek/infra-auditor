@@ -400,3 +400,21 @@ Record current official documentation used for architectural or implementation d
 - Conclusion: `mcp.run()` defaults to stdio for local servers; stdout is the
   transport channel, so the project MCP command must avoid user-facing stdout
   output before the server starts.
+
+## 2026-09-07 S3 Analytics Layout Sources
+
+### Athena partitioning
+
+- URL: https://docs.aws.amazon.com/athena/latest/ug/partitions.html
+- Date consulted: 2026-09-07
+- Conclusion: Athena partition pruning depends on partition metadata and query
+  predicates. The raw operational JSON path stays optimized for exact service,
+  region, instance, subservice, date, and timestamp reads; a future
+  table-oriented Parquet layout may be introduced separately.
+
+### Glue crawler partition indexes
+
+- URL: https://docs.aws.amazon.com/glue/latest/dg/add-crawler.html
+- Date consulted: 2026-09-07
+- Conclusion: Glue crawlers can create partition indexes for S3 targets. This
+  does not require preserving duplicated full JSON snapshots in the raw zone.

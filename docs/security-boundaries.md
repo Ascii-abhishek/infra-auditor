@@ -30,25 +30,26 @@ uv run infra-auditor mcp
 Allowed MCP tools may read only approved audit artifacts:
 
 - configured instance summaries without secret IDs,
-- full snapshot object listings for configured aliases,
+- completed-run manifest listings for configured aliases,
 - latest deterministic snapshot/fleet reports,
 - filtered deterministic finding summaries,
-- split raw artifact listings for approved service/subservice boundaries,
-- latest split raw artifacts for approved service/subservice boundaries.
+- canonical raw artifact listings for approved service/subservice boundaries,
+- latest canonical raw artifacts for approved service/subservice boundaries.
 
 The only live MCP entrypoints are `sync_latest_audit_data` and
 `sync_today_audit_data`. They may call the existing read-only collector workflow
 for configured aliases and write immutable audit artifacts to S3. The today
-mode may first list the latest approved full snapshot for a configured alias and
-current split artifact prefixes for that alias, and skip collection only when
-the newest full snapshot and all current split artifacts are already under the
-current UTC day. The tools must not accept AWS action names, SQL text, secret
+mode may list the latest approved completed-run manifest for a configured alias
+and skip collection when it is already under the current UTC day. The tools
+must not accept AWS action names, SQL text, secret
 IDs, raw S3 keys, or remediation instructions.
 
 MCP tools must derive S3 prefixes from runtime settings, configured instance
 aliases, and hard-coded approved service/subservice choices. Do not expose an MCP
 tool that accepts arbitrary S3 keys, S3 prefixes, AWS service/action names,
 SQL strings, shell commands, Secrets Manager secret IDs, or remediation actions.
+Manifest references must match the complete hard-coded boundary set and the
+canonical key derived from that manifest before any referenced S3 object read.
 
 ## No Automatic Remediation In V1
 
@@ -124,15 +125,15 @@ The collector must not call AWS mutating APIs such as `ModifyDBInstance`,
 `ModifyDBParameterGroup`, `AuthorizeSecurityGroupIngress`,
 `RevokeSecurityGroupIngress`, or `ApplyPendingMaintenanceAction`.
 
-Snapshot writers may use `s3:PutObject` only for approved immutable audit
+Artifact writers may use `s3:PutObject` only for approved immutable audit
 artifact prefixes such as `raw/snapshots/*`.
 
 ## Report Console Boundary
 
-The local FastAPI report console is an internal control surface over snapshots
-and reports. It may list/read raw S3 snapshots for reporting and may trigger the
-existing read-only collection workflow, which only writes new snapshot objects
-to S3.
+The local FastAPI report console is an internal control surface over audit
+artifacts and reports. It may list/read canonical S3 manifests and artifacts for
+reporting and may trigger the existing read-only collection workflow, which
+only writes new immutable artifact families to S3.
 
 It must not expose generic SQL, arbitrary AWS API calls, automatic remediation,
 secret reads beyond the collector workflow, or application table data.

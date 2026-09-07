@@ -18,7 +18,7 @@
   </script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet">
-  <link href="/static/app.css" rel="stylesheet">
+  <link href="/static/app.css?v={{ static_asset_version }}" rel="stylesheet">
 </head>
 <body>
   <div class="app-shell">
@@ -26,22 +26,40 @@
       <div class="brand-block">
         <div class="brand-mark">IA</div>
         <div class="brand-copy">
-          <div class="brand-title">Infra Auditor <sub class="brand-version">v{{ project_version }}</sub></div>
-          <div class="brand-subtitle">{{ settings.environment }} / {{ settings.snapshot_bucket }}</div>
+          <div class="brand-heading">
+            <div class="brand-title">Infra Auditor</div>
+            <span class="brand-version">v{{ project_version }}</span>
+          </div>
+          <div class="brand-metadata" aria-label="Project environment and snapshot bucket">
+            <span class="brand-environment">{{ settings.environment }}</span>
+            <span class="brand-separator" aria-hidden="true">·</span>
+            <span class="brand-bucket" title="Snapshot bucket: {{ settings.snapshot_bucket }}">
+              <i aria-hidden="true" class="bi bi-bucket"></i>
+              <span>{{ settings.snapshot_bucket }}</span>
+            </span>
+          </div>
         </div>
         <button class="icon-button theme-toggle" type="button" data-theme-toggle aria-label="Toggle theme">
-          <i class="bi bi-moon-stars"></i>
+          <i aria-hidden="true" class="bi bi-moon-stars"></i>
         </button>
       </div>
 
       <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-label="Collapse sidebar">
-        <i class="bi bi-chevron-left"></i>
+        <i aria-hidden="true" class="bi bi-chevron-left"></i>
       </button>
+
+      <div class="sidebar-actions">
+        <form method="post" action="/sync-jobs?mode=latest&target=all&section={{ section }}&instance={{ selected_instance }}" data-sync-form>
+          <button class="nav-item sidebar-action" type="submit" title="Sync all" aria-label="Sync all">
+            <i aria-hidden="true" class="bi bi-arrow-repeat"></i><span>Sync all</span>
+          </button>
+        </form>
+      </div>
 
       <nav class="nav-list" aria-label="Audit sections">
         {% for item in nav_items %}
-          <a class="nav-item {% if section == item.id %}active{% endif %}" href="/?section={{ item.id }}&service={{ selected_service }}{% if item.href_extra == 'instance' %}&instance={{ selected_instance }}{% endif %}" title="{{ item.label }}">
-            <i class="bi {{ item.icon }}"></i>
+          <a class="nav-item {% if section == item.id %}active{% endif %}" href="/?section={{ item.id }}{% if item.href_extra == 'instance' %}&instance={{ selected_instance }}{% endif %}" title="{{ item.label }}">
+            <i aria-hidden="true" class="bi {{ item.icon }}"></i>
             <span>{{ item.label }}</span>
             <small>{{ item.state }}</small>
           </a>
@@ -49,8 +67,8 @@
       </nav>
 
       <div class="chat-dock">
-        <a class="nav-item {% if section == 'chat' %}active{% endif %}" href="/?section=chat&service={{ selected_service }}" title="Chat">
-          <i class="bi bi-chat-square-text"></i>
+        <a class="nav-item {% if section == 'chat' %}active{% endif %}" href="/?section=chat" title="Chat">
+          <i aria-hidden="true" class="bi bi-chat-square-text"></i>
           <span>Chat</span>
           <small>Queued</small>
         </a>
@@ -65,6 +83,6 @@
       </div>
     </main>
   </div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ static_asset_version }}"></script>
 </body>
 </html>

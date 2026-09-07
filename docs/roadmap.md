@@ -8,13 +8,13 @@
 - Secrets Manager credential boundary.
 - PostgreSQL connection foundation.
 - Database inventory collector.
-- S3 JSON snapshot.
+- Canonical schema-2 S3 JSON artifacts and completion manifest.
 - Initial role security, activity summary, AWS operations, and network/metric
   evidence collectors.
 - Initial snapshot/fleet report model and local FastAPI report console.
 - Service-section UI shell for RDS, Database (PG), Reports, Raw Data, planned
   services, and future Chat.
-- Split raw S3 artifacts for RDS, PostgreSQL, and
+- Raw S3 artifacts for RDS, PostgreSQL, and
   deterministic-finding boundaries.
 - Base MCP interface over approved snapshot/report data with controlled
   latest-data and today-data sync.
@@ -24,7 +24,7 @@
 - Create read-only AWS audit permission set.
 - Create per-instance Secrets Manager secrets.
 - Run collector against `raptor-catalog` and `udb`.
-- Validate generated S3 snapshots.
+- Validate generated S3 artifact families and manifests.
 - Verify auditor privileges do not include application table access.
 
 ## Phase 0.3 - First Deterministic Rules
@@ -54,7 +54,7 @@
   connection pressure, and safe pg_stat_statements-derived summaries without
   unrestricted query text.
 - Parquet/Glue/Athena historical storage.
-- Broader split-aware UI/report reads and historical indexes.
+- Historical indexes and richer artifact-native UI/report reads.
 - Hosted/authenticated MCP exposure after an approved access design.
 - Richer HTML/JSON/Markdown reports and SES daily email.
 - Docker/ECR/ECS/EventBridge deployment.

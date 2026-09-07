@@ -40,11 +40,14 @@ from infra_auditor.ui.sync_jobs import UISyncJobManager
 UI_DIR = Path(__file__).parent
 TEMPLATES_DIR = UI_DIR / "templates"
 STATIC_DIR = UI_DIR / "static"
-SNAPSHOT_SERVICES = ({"id": "rds-postgres", "label": "RDS PostgreSQL"},)
 try:
     PROJECT_VERSION = version("infra-auditor")
 except PackageNotFoundError:
     PROJECT_VERSION = "0.1.0"
+STATIC_ASSET_VERSION = max(
+    (UI_DIR / "static" / "app.css").stat().st_mtime_ns,
+    (UI_DIR / "static" / "app.js").stat().st_mtime_ns,
+)
 NAV_ITEMS = (
     {
         "id": "rds",
@@ -135,7 +138,6 @@ SECTION_SUBSERVICES: dict[str, tuple[dict[str, str], ...]] = {
         },
     ),
     "raw": (
-        {"id": "full-snapshot", "label": "Full snapshot"},
         {"id": SnapshotSplitSubservice.RDS_INSTANCE.value, "label": "RDS instance"},
         {"id": SnapshotSplitSubservice.RDS_OPERATIONS.value, "label": "RDS operations"},
         {
@@ -164,7 +166,7 @@ SECTION_SUBSERVICES: dict[str, tuple[dict[str, str], ...]] = {
         },
     ),
 }
-RAW_SPLIT_SUBSERVICE_SERVICES: dict[str, SnapshotSplitService] = {
+RAW_ARTIFACT_SUBSERVICE_SERVICES: dict[str, SnapshotSplitService] = {
     SnapshotSplitSubservice.RDS_INSTANCE.value: SnapshotSplitService.RDS,
     SnapshotSplitSubservice.RDS_OPERATIONS.value: SnapshotSplitService.RDS,
     SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY.value: SnapshotSplitService.POSTGRES,
@@ -229,7 +231,6 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(
-        service: Annotated[str | None, Query()] = None,
         section: Annotated[str | None, Query()] = None,
         view: Annotated[str | None, Query()] = None,
         instance: Annotated[str | None, Query()] = None,
@@ -245,13 +246,10 @@ def create_app(
         error_message: Annotated[str | None, Query(alias="error")] = None,
     ) -> HTMLResponse:
         aliases = list(resource_config.instances)
-        selected_service = _selected_snapshot_service(service)
-        selected_service_label = _snapshot_service_label(selected_service)
         selected_section = _selected_section(section, legacy_view=view)
         selected_instance = _selected_instance(instance, aliases)
         selected_subservice = _selected_subservice(selected_section, subservice)
         content_url = _content_url(
-            service=selected_service,
             section=selected_section,
             instance=selected_instance,
             database=database,
@@ -268,8 +266,6 @@ def create_app(
         html = template_env.get_template("dashboard.html").render(
             aliases=aliases,
             nav_items=NAV_ITEMS,
-            selected_service=selected_service,
-            selected_service_label=selected_service_label,
             section=selected_section,
             section_label=_section_label(selected_section),
             selected_instance=selected_instance,
@@ -277,12 +273,12 @@ def create_app(
             content_url=content_url,
             settings=settings,
             project_version=PROJECT_VERSION,
+            static_asset_version=STATIC_ASSET_VERSION,
         )
         return HTMLResponse(html)
 
     @app.get("/view", response_class=HTMLResponse)
     def dashboard_view(
-        service: Annotated[str | None, Query()] = None,
         section: Annotated[str | None, Query()] = None,
         view: Annotated[str | None, Query()] = None,
         instance: Annotated[str | None, Query()] = None,
@@ -298,8 +294,6 @@ def create_app(
         error_message: Annotated[str | None, Query(alias="error")] = None,
     ) -> HTMLResponse:
         aliases = list(resource_config.instances)
-        selected_service = _selected_snapshot_service(service)
-        selected_service_label = _snapshot_service_label(selected_service)
         selected_section = _selected_section(section, legacy_view=view)
         selected_instance = _selected_instance(instance, aliases)
         selected_database = database or "all"
@@ -330,29 +324,15 @@ def create_app(
                     settings=settings,
                     resource_config=resource_config,
                     reader=reader,
-                    service=selected_service,
                 )
             if selected_section in INSTANCE_SECTIONS:
-                region = resource_config.region_for_instance(selected_instance)
-                if selected_section == "raw" and selected_subservice != "full-snapshot":
-                    split_service = _raw_split_service_for_subservice(selected_subservice)
-                    split_subservice = SnapshotSplitSubservice(selected_subservice)
-                    snapshots = [
-                        *reader.list_snapshot_split_artifacts(
-                            environment=settings.environment,
-                            region=region,
-                            service=split_service,
-                            subservice=split_subservice,
-                            instance_alias=selected_instance,
-                        )
-                    ]
-                else:
-                    snapshots = reader.list_snapshots(
-                        environment=settings.environment,
-                        region=region,
-                        service=selected_service,
-                        instance_alias=selected_instance,
-                    )
+                snapshots = _view_snapshots(
+                    reader,
+                    settings,
+                    resource_config,
+                    subservice=selected_subservice,
+                    instance=selected_instance,
+                )
                 snapshot_choices = _snapshot_choices(snapshots)
                 key_choice = _snapshot_choice_for_key(snapshot_choices, selected_key)
                 if key_choice is not None:
@@ -365,21 +345,21 @@ def create_app(
                     selected_timestamp,
                     timestamp_options,
                 )
-                selected_key = selected_key or _selected_snapshot_key(
+                selected_key = _selected_snapshot_key(
                     snapshot_choices,
                     selected_date=selected_date,
                     selected_timestamp=selected_timestamp,
                 )
                 if selected_key is not None:
                     raw_source_uri = f"s3://{settings.snapshot_bucket}/{selected_key}"
-                    if selected_section == "raw" and selected_subservice != "full-snapshot":
-                        artifact = reader.read_snapshot_split_artifact(selected_key)
+                    if selected_section == "raw":
+                        artifact = reader.read_artifact(selected_key)
                         raw_snapshot_json = json.dumps(
                             artifact.model_dump(mode="json"),
                             indent=2,
                         )
                     else:
-                        snapshot = reader.read_snapshot(selected_key)
+                        snapshot = reader.read_snapshot_for_artifact(selected_key)
                         report = build_snapshot_report(
                             snapshot,
                             source_uri=raw_source_uri,
@@ -392,11 +372,6 @@ def create_app(
                             instance_snapshot,
                             selected_database=selected_database,
                         )
-                        if selected_section == "raw":
-                            raw_snapshot_json = json.dumps(
-                                snapshot.model_dump(mode="json"),
-                                indent=2,
-                            )
             fleet_findings = _fleet_findings(
                 fleet_report,
                 severity=selected_severity,
@@ -412,9 +387,6 @@ def create_app(
         html = template_env.get_template("partials/content.html").render(
             aliases=aliases,
             nav_items=NAV_ITEMS,
-            snapshot_services=SNAPSHOT_SERVICES,
-            selected_service=selected_service,
-            selected_service_label=selected_service_label,
             section=selected_section,
             section_label=_section_label(selected_section),
             selected_instance=selected_instance,
@@ -454,12 +426,49 @@ def create_app(
         )
         return HTMLResponse(html)
 
+    @app.get("/api/filter-options")
+    def api_filter_options(
+        instance: Annotated[str, Query()],
+        section: Annotated[str, Query()],
+        subservice: Annotated[str, Query()],
+        date: Annotated[str | None, Query()] = None,
+    ) -> JSONResponse:
+        if instance not in resource_config.instances:
+            return JSONResponse({"error": "Unknown server"}, status_code=404)
+        if section not in INSTANCE_SECTIONS or subservice not in {
+            option["id"] for option in _subservice_options(section)
+        }:
+            return JSONResponse({"error": "Unknown service/subservice"}, status_code=400)
+        try:
+            choices = _snapshot_choices(
+                _view_snapshots(
+                    reader,
+                    settings,
+                    resource_config,
+                    subservice=subservice,
+                    instance=instance,
+                )
+            )
+        except InfraAuditorError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        dates = _date_options(choices)
+        selected_date = _selected_date(date, dates)
+        timestamps = _timestamp_options(choices, selected_date)
+        return JSONResponse(
+            {
+                "dates": dates,
+                "date": selected_date,
+                "timestamps": timestamps,
+                "timestamp": _selected_timestamp(None, timestamps),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/sync-jobs")
     def start_sync_job(
         mode: Annotated[str | None, Query()] = None,
         target: Annotated[str | None, Query()] = None,
         instance: Annotated[str | None, Query()] = None,
-        service: Annotated[str | None, Query()] = None,
         section: Annotated[str | None, Query()] = None,
         database: Annotated[str | None, Query()] = None,
         subservice: Annotated[str | None, Query()] = None,
@@ -470,13 +479,11 @@ def create_app(
         if instance_alias is not None and instance_alias not in resource_config.instances:
             return JSONResponse({"error": f"unknown instance: {instance_alias}"}, status_code=404)
 
-        selected_service = _selected_snapshot_service(service)
         selected_section = _selected_section(section)
         selected_instance = _selected_instance(instance, list(resource_config.instances))
         selected_subservice = _selected_subservice(selected_section, subservice)
         job = sync_jobs.start(instance_alias=instance_alias, mode=selected_mode)
         refresh_url = _content_url(
-            service=selected_service,
             section=selected_section,
             instance=selected_instance,
             database=database,
@@ -506,19 +513,17 @@ def create_app(
             return JSONResponse({"error": f"unknown sync job: {job_id}"}, status_code=404)
         return JSONResponse(job.model_dump(mode="json"))
 
-    @app.get("/api/snapshots")
-    def api_snapshots(
+    @app.get("/api/runs")
+    def api_runs(
         instance: Annotated[str, Query()],
-        service: Annotated[str | None, Query()] = None,
     ) -> JSONResponse:
         if instance not in resource_config.instances:
             return JSONResponse({"error": f"unknown instance: {instance}"}, status_code=404)
         region = resource_config.region_for_instance(instance)
         try:
-            objects = reader.list_snapshots(
+            objects = reader.list_manifests(
                 environment=settings.environment,
                 region=region,
-                service=_selected_snapshot_service(service),
                 instance_alias=instance,
             )
         except InfraAuditorError as exc:
@@ -528,7 +533,6 @@ def create_app(
     @app.get("/api/latest-report")
     def api_latest_report(
         instance: Annotated[str, Query()],
-        service: Annotated[str | None, Query()] = None,
     ) -> JSONResponse:
         if instance not in resource_config.instances:
             return JSONResponse({"error": f"unknown instance: {instance}"}, status_code=404)
@@ -537,7 +541,6 @@ def create_app(
             item, snapshot = reader.read_latest_snapshot(
                 environment=settings.environment,
                 region=region,
-                service=_selected_snapshot_service(service),
                 instance_alias=instance,
             )
             report = build_snapshot_report(snapshot, source_uri=item.uri, top_findings_limit=100)
@@ -546,13 +549,12 @@ def create_app(
         return JSONResponse(report.model_dump(mode="json"))
 
     @app.get("/api/fleet-report")
-    def api_fleet_report(service: Annotated[str | None, Query()] = None) -> JSONResponse:
+    def api_fleet_report() -> JSONResponse:
         try:
             fleet_report, fleet_errors = _load_fleet_report(
                 settings=settings,
                 resource_config=resource_config,
                 reader=reader,
-                service=_selected_snapshot_service(service),
             )
         except InfraAuditorError as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
@@ -563,21 +565,32 @@ def create_app(
             }
         )
 
-    @app.get("/api/snapshot")
-    def api_snapshot(key: Annotated[str, Query()]) -> JSONResponse:
+    @app.get("/api/run")
+    def api_run(
+        instance: Annotated[str, Query()],
+        key: Annotated[str, Query()],
+    ) -> JSONResponse:
+        if instance not in resource_config.instances:
+            return JSONResponse({"error": f"unknown instance: {instance}"}, status_code=404)
         try:
-            snapshot = reader.read_snapshot(key)
+            resolved_key = _resolve_manifest_key(
+                reader, settings, resource_config, instance=instance, key=key
+            )
+            if resolved_key is None:
+                return JSONResponse(
+                    {"error": "run is not in the approved listing"}, status_code=404
+                )
+            snapshot = reader.read_snapshot(resolved_key)
         except InfraAuditorError as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
         return JSONResponse(snapshot.model_dump(mode="json"))
 
     @app.get("/exports/fleet.json")
-    def export_fleet_json(service: Annotated[str | None, Query()] = None) -> JSONResponse:
+    def export_fleet_json() -> JSONResponse:
         fleet_report, fleet_errors = _load_fleet_report(
             settings=settings,
             resource_config=resource_config,
             reader=reader,
-            service=_selected_snapshot_service(service),
         )
         return JSONResponse(
             {
@@ -587,12 +600,11 @@ def create_app(
         )
 
     @app.get("/exports/fleet.md")
-    def export_fleet_markdown(service: Annotated[str | None, Query()] = None) -> PlainTextResponse:
+    def export_fleet_markdown() -> PlainTextResponse:
         fleet_report, fleet_errors = _load_fleet_report(
             settings=settings,
             resource_config=resource_config,
             reader=reader,
-            service=_selected_snapshot_service(service),
         )
         if fleet_report is None:
             body = "# Infra Auditor Fleet Report\n\nNo snapshots loaded.\n"
@@ -605,12 +617,30 @@ def create_app(
         return PlainTextResponse(body, media_type="text/markdown")
 
     @app.get("/exports/instance.json")
-    def export_instance_json(key: Annotated[str, Query()]) -> JSONResponse:
+    def export_instance_json(
+        instance: Annotated[str, Query()],
+        subservice: Annotated[str, Query()],
+        key: Annotated[str, Query()],
+    ) -> JSONResponse:
+        if instance not in resource_config.instances:
+            return JSONResponse({"error": f"unknown instance: {instance}"}, status_code=404)
         try:
-            snapshot = reader.read_snapshot(key)
+            resolved_key = _resolve_artifact_key(
+                reader,
+                settings,
+                resource_config,
+                instance=instance,
+                subservice=subservice,
+                key=key,
+            )
+            if resolved_key is None:
+                return JSONResponse(
+                    {"error": "artifact is not in the approved listing"}, status_code=404
+                )
+            snapshot = reader.read_snapshot_for_artifact(resolved_key)
             report = build_snapshot_report(
                 snapshot,
-                source_uri=f"s3://{settings.snapshot_bucket}/{key}",
+                source_uri=f"s3://{settings.snapshot_bucket}/{resolved_key}",
                 top_findings_limit=100,
             )
         except InfraAuditorError as exc:
@@ -618,12 +648,28 @@ def create_app(
         return JSONResponse(report.model_dump(mode="json"))
 
     @app.get("/exports/instance.md")
-    def export_instance_markdown(key: Annotated[str, Query()]) -> PlainTextResponse:
+    def export_instance_markdown(
+        instance: Annotated[str, Query()],
+        subservice: Annotated[str, Query()],
+        key: Annotated[str, Query()],
+    ) -> PlainTextResponse:
+        if instance not in resource_config.instances:
+            return PlainTextResponse(f"unknown instance: {instance}", status_code=404)
         try:
-            snapshot = reader.read_snapshot(key)
+            resolved_key = _resolve_artifact_key(
+                reader,
+                settings,
+                resource_config,
+                instance=instance,
+                subservice=subservice,
+                key=key,
+            )
+            if resolved_key is None:
+                return PlainTextResponse("artifact is not in the approved listing", status_code=404)
+            snapshot = reader.read_snapshot_for_artifact(resolved_key)
             report = build_snapshot_report(
                 snapshot,
-                source_uri=f"s3://{settings.snapshot_bucket}/{key}",
+                source_uri=f"s3://{settings.snapshot_bucket}/{resolved_key}",
                 top_findings_limit=100,
             )
         except InfraAuditorError as exc:
@@ -647,7 +693,6 @@ def _load_fleet_report(
     settings: AppSettings,
     resource_config: ResourceConfig,
     reader: S3SnapshotReader,
-    service: str,
 ) -> tuple[FleetReport | None, dict[str, str]]:
     reports: list[SnapshotReport] = []
     errors: dict[str, str] = {}
@@ -657,7 +702,6 @@ def _load_fleet_report(
             item, snapshot = reader.read_latest_snapshot(
                 environment=settings.environment,
                 region=region,
-                service=service,
                 instance_alias=alias,
             )
         except InfraAuditorError as exc:
@@ -670,7 +714,7 @@ def _load_fleet_report(
     return (
         build_fleet_report(
             reports,
-            service=service,
+            service="audit",
             environment=settings.environment,
             region=settings.aws_region,
         ),
@@ -698,24 +742,10 @@ def _fleet_findings(
     return findings[:30]
 
 
-def _selected_snapshot_service(candidate: str | None) -> str:
-    service_ids = {service["id"] for service in SNAPSHOT_SERVICES}
-    if candidate in service_ids:
-        return candidate
-    return SNAPSHOT_SERVICES[0]["id"]
-
-
 def _selected_sync_mode(candidate: str | None) -> AuditSyncMode:
     if candidate == AuditSyncMode.TODAY.value:
         return AuditSyncMode.TODAY
     return AuditSyncMode.LATEST
-
-
-def _snapshot_service_label(service_id: str) -> str:
-    for service in SNAPSHOT_SERVICES:
-        if service["id"] == service_id:
-            return service["label"]
-    return service_id
 
 
 def _selected_section(candidate: str | None, legacy_view: str | None = None) -> str:
@@ -830,8 +860,69 @@ def _subservice_label(section: str, subservice: str) -> str:
     return subservice or "All"
 
 
-def _raw_split_service_for_subservice(subservice: str) -> SnapshotSplitService:
-    return RAW_SPLIT_SUBSERVICE_SERVICES[subservice]
+def _artifact_service_for_subservice(subservice: str) -> SnapshotSplitService:
+    return RAW_ARTIFACT_SUBSERVICE_SERVICES[subservice]
+
+
+def _view_snapshots(
+    reader: S3SnapshotReader,
+    settings: AppSettings,
+    resource_config: ResourceConfig,
+    *,
+    subservice: str,
+    instance: str,
+) -> list[S3SnapshotObject]:
+    """List history available for the selected evidence boundary."""
+    region = resource_config.region_for_instance(instance)
+    artifacts = reader.list_artifacts(
+        environment=settings.environment,
+        region=region,
+        service=_artifact_service_for_subservice(subservice),
+        subservice=SnapshotSplitSubservice(subservice),
+        instance_alias=instance,
+    )
+    return list(artifacts)
+
+
+def _resolve_manifest_key(
+    reader: S3SnapshotReader,
+    settings: AppSettings,
+    resource_config: ResourceConfig,
+    *,
+    instance: str,
+    key: str,
+) -> str | None:
+    """Resolve a caller-provided run key only through its approved listing."""
+
+    manifests = reader.list_manifests(
+        environment=settings.environment,
+        region=resource_config.region_for_instance(instance),
+        instance_alias=instance,
+    )
+    return key if any(item.key == key for item in manifests) else None
+
+
+def _resolve_artifact_key(
+    reader: S3SnapshotReader,
+    settings: AppSettings,
+    resource_config: ResourceConfig,
+    *,
+    instance: str,
+    subservice: str,
+    key: str,
+) -> str | None:
+    """Resolve a caller-provided artifact key only through its approved listing."""
+
+    if subservice not in RAW_ARTIFACT_SUBSERVICE_SERVICES:
+        return None
+    artifacts = _view_snapshots(
+        reader,
+        settings,
+        resource_config,
+        subservice=subservice,
+        instance=instance,
+    )
+    return key if any(item.key == key for item in artifacts) else None
 
 
 def _snapshot_choices(objects: Sequence[S3SnapshotObject]) -> list[SnapshotChoice]:
@@ -920,7 +1011,6 @@ def _selected_severity(candidate: str | None) -> str:
 
 def _content_url(
     *,
-    service: str,
     section: str,
     instance: str,
     database: str | None,
@@ -935,7 +1025,6 @@ def _content_url(
     error: str | None,
 ) -> str:
     params = {
-        "service": service,
         "section": section,
         "instance": instance,
     }

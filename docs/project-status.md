@@ -23,11 +23,10 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
   summaries, RDS operations evidence, Secrets Manager credential resolution,
   PostgreSQL database inventory, PostgreSQL activity summary, PostgreSQL role
   security, deterministic findings, and S3 JSON snapshot persistence.
-- Collection now writes the full compatibility snapshot under
-  `raw/snapshots/.../service=rds-postgres/...` plus service/subservice raw
-  artifacts under `raw/snapshots/artifact_schema=...` for RDS, PostgreSQL, and
-  deterministic-finding boundaries. Current RDS-adjacent EC2 security group and
-  CloudWatch RDS metric evidence are RDS subservices.
+- Collection now writes only canonical schema-2 service/subservice artifacts
+  under `raw/snapshots/schema=2/...` for RDS, PostgreSQL, and deterministic
+  findings, followed by a completion manifest. Current RDS-adjacent EC2
+  security group and CloudWatch RDS metric evidence are RDS subservices.
 - The PostgreSQL auditor permission boundary has been checked with fixed catalog queries and mostly matches the intended read-only posture.
 - `SYS_ENV` now defaults to `dev`, accepts only `dev` or `prod`, and derives snapshot bucket names as `infra-audit-rl-<SYS_ENV>`.
 - PostgreSQL security rules `SEC002` and `SEC003` are implemented and embedded
@@ -45,27 +44,28 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
   `127.0.0.1:8008`.
 - `./run.sh` is available as the local central runner: it checks Python/uv,
   syncs dependencies, loads `.env`, and starts the report console.
-- The report console uses a navigation-only left pane for RDS, Database (PG),
+- The report console uses a left pane with project environment/bucket context,
+  global Sync all, and navigation for RDS, Database (PG),
   planned AWS, planned EC2, Elasticsearch, Bitbucket, Reports, Raw Data, and a
   fixed Chat entry. Runtime selectors and actions live in the right pane.
 - Service views expose right-pane selectors for subservice, date, and timestamp,
   defaulting to the latest snapshot object.
 - The visible report console sync actions run as background jobs with per-alias
-  progress polling. `Sync today` skips configured aliases only when they already
-  have a full snapshot and all current split artifacts for the current UTC day.
+  progress polling. Service views show `Sync now`; global `Sync all` lives below
+  the sidebar project title. Today sync remains available through MCP.
 - The report console now renders a lightweight shell first and loads S3-backed
   content through `/view`, so slow AWS/S3 token or network work shows behind a
   visible loader rather than delaying the whole page.
 - `uv run infra-auditor mcp` starts a local stdio MCP server with tools over
-  configured instances, latest reports, finding summaries, snapshot listings,
-  latest approved split artifacts, and controlled latest/today-data sync.
+  configured instances, latest reports, finding summaries, completed-run
+  listings, latest approved artifacts, and controlled latest/today-data sync.
 
 ## What Is Partially Implemented
 
 - Snapshot model contains run metadata, RDS metadata, AWS network/metric/ops
   evidence, database inventory, PostgreSQL activity evidence, PostgreSQL role
   security evidence, collector statuses, collection gaps, and findings.
-- Split artifact model contains source run metadata, service/subservice and
+- Artifact model contains run metadata, service/subservice and
   collector-boundary metadata, boundary status, and only the evidence owned by
   that RDS, PostgreSQL, or deterministic-finding split.
 - Report model contains per-snapshot and per-service fleet summaries: severity
@@ -104,9 +104,6 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
 - On `raptor-catalog`, `pg_stat_statements` extension views are selectable in `datalyze_db`, `ptm_flow_prod`, and `raptor_catalog`. This is not application table access, but future query/stat collectors must not read query text without a documented minimization design.
 
 ## Open Decisions
-
-- Decide when the UI/report path should read split artifacts directly instead
-  of using the full compatibility snapshot.
 - Decide the first dedicated AWS account posture collector boundary
   (credential report, IAM last-used, IAM Identity Center, or role/policy
   inventory) before adding AWS/EC2 as live standalone UI domains.
@@ -116,19 +113,61 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
 ## Blockers
 
 - No current blocker for read-only RDS PostgreSQL snapshot collection.
-- No current blocker for the local report console against existing S3 snapshots.
+- The report console needs one schema-2 `Sync all` before it has readable live
+  history; existing schema-1 objects are intentionally ignored.
 - Parquet/Glue/Athena, Performance Insights, SES, and ECS/EventBridge
   deployment remain unimplemented.
 
 ## Next Recommended Task
 
-Run `Sync today` or `sync_today_audit_data` once. It will create the new clean
-`service=rds` split artifacts when the current UTC-day snapshot family is
-missing or outdated. Then confirm Raw Data can read
-`rds/cloudwatch-rds-metrics` and `rds/ec2-security-groups`, and design the LLM
-analyst boundary over latest reports/splits.
+Run `Sync all` in the sidebar or `sync_latest_audit_data` through MCP once to
+create schema-2 artifact families and manifests for every configured instance.
+Confirm report and Raw Data reads, then remove the pre-alpha schema-1 objects
+from S3. Afterward, design the LLM analyst boundary over reports/artifacts.
 
 ## Last Validation
+
+2026-09-07 canonical schema-2 storage cutover:
+
+- Removed full compatibility snapshot persistence and all schema-1 read paths.
+- Finalized `schema/env/service/region/instance/subservice/date/timestamp`
+  ordering, with optional instance partitions reserved for future non-instance
+  services and `region=global` reserved for nonregional evidence.
+- Collection writes eight boundary-owned artifacts and writes a small run
+  manifest last; only manifests define completed runs.
+- UI reports reconstruct an in-memory snapshot from a selected artifact's
+  manifest, while Raw Data reads the selected artifact directly.
+- MCP tools now expose completed runs and canonical artifacts. Today sync checks
+  the latest manifest instead of coordinating duplicate object families.
+- Manifest references are validated against the complete approved boundary set
+  and exact canonical keys before referenced S3 reads.
+- Ruff, formatting, mypy, configuration validation, JavaScript syntax, and all
+  46 unit tests pass.
+- No schema-2 live collection or schema-1 deletion was performed in this session.
+
+2026-09-07 dependent filters and console cleanup (storage details superseded by
+the schema-2 cutover above):
+
+- Server/subservice/date changes now refresh dependent dates/timestamps through
+  a scoped API, with loaders, stale-request cancellation, no-store responses,
+  recoverable error states, and versioned browser assets.
+- RDS/Database selectors require matching subservice artifacts and full snapshots;
+  Raw Data full snapshot remains available for pre-split history.
+- Removed stale-key override of selected filter context. History remains bounded
+  to the reader's existing newest 50 objects per partition.
+- Moved global Sync all below project branding; service actions say Sync now and
+  sit at the right edge of each service heading. Removed visible Sync today;
+  restored the environment value and icon-labelled snapshot bucket in a compact
+  metadata row below the title.
+- Python quality gates passed with 45 unit tests; JavaScript syntax check passed.
+- Chromium checks with fake data passed for Apply navigation, dependent options,
+  empty/error recovery, inline title/version fit, and collapsed-sidebar Sync all.
+- A stale running FastAPI process was found serving the new static JavaScript
+  without the newly registered `/api/filter-options` route, producing HTTP 404s.
+  After restarting the local console, live read-only HTTP checks passed for both
+  servers across RDS, PostgreSQL, and Raw Data transitions and the selected view URL.
+- No live AWS/PostgreSQL collection was run; only approved S3 report-data reads occurred.
+
 
 2026-09-02 repository/architecture review:
 

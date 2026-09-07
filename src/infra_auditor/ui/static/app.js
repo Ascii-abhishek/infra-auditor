@@ -6,6 +6,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initializeSidebarToggle();
   initializeAsyncContent();
   initializeSyncForms();
+  initializeFilterCascade();
   initializeSubmitLoader();
 });
 
@@ -107,9 +108,10 @@ function initializeAsyncContent() {
       return response.text();
     })
     .then((html) => {
-      root.innerHTML = html;
+      if (!syncActive) root.innerHTML = html;
     })
     .catch((error) => {
+      if (syncActive) return;
       root.innerHTML = `
         <div class="alert alert-danger py-2">
           Failed to load audit data: ${escapeHtml(error.message)}
@@ -125,6 +127,13 @@ function initializeSubmitLoader() {
       return;
     }
 
+    if (event.defaultPrevented) return;
+    if (form instanceof HTMLFormElement && form.method === "get") {
+      event.preventDefault();
+      const url = new URL(form.action, window.location.href);
+      url.search = new URLSearchParams(new FormData(form)).toString();
+      window.location.assign(url.href);
+    }
     const root = document.getElementById("content-root");
     if (!root) {
       return;
@@ -133,8 +142,8 @@ function initializeSubmitLoader() {
     root.innerHTML = `
       <div class="loader-panel" role="status" aria-live="polite">
         <div class="spinner-border text-primary" aria-hidden="true"></div>
-        <div class="loader-title">Running audit workflow</div>
-        <div class="loader-copy">Waiting for the collector and S3 snapshot update.</div>
+        <div class="loader-title">Loading selected audit data</div>
+        <div class="loader-copy">Reading the selected snapshot.</div>
       </div>
     `;
   });
@@ -148,6 +157,9 @@ function initializeSyncForms() {
     }
 
     event.preventDefault();
+    if (syncActive) return;
+    syncActive = true;
+    document.querySelectorAll("[data-sync-form] button").forEach((button) => { button.disabled = true; });
     renderSyncPanel({status: "queued", message: "starting sync job", results: []});
 
     fetch(form.action, {method: "POST", headers: {"Accept": "application/json"}})
@@ -179,7 +191,7 @@ function pollSyncJob(statusUrl, refreshUrl) {
           return;
         }
         window.setTimeout(() => {
-          window.location.href = refreshUrl;
+          window.location.href = refreshUrl.replace(/^\/view\?/, "/?");
         }, 1200);
       })
       .catch((error) => {
@@ -236,6 +248,8 @@ function renderSyncResult(result) {
 }
 
 function renderSyncError(message) {
+  syncActive = false;
+  document.querySelectorAll("[data-sync-form] button").forEach((button) => { button.disabled = false; });
   const root = document.getElementById("content-root");
   if (!root) {
     return;
@@ -293,4 +307,108 @@ function escapeHtml(value) {
   const div = document.createElement("div");
   div.textContent = value;
   return div.innerHTML;
+}
+
+let syncActive = false;
+
+function initializeFilterCascade() {
+  let pending;
+  document.addEventListener("change", async (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLSelectElement)) return;
+    const form = field.closest("[data-filter-form]");
+    if (!form || !["instance", "subservice", "date"].includes(field.name)) return;
+    if (pending) pending.abort();
+    const request = new AbortController();
+    pending = request;
+    const date = form.elements.namedItem("date");
+    const timestamp = form.elements.namedItem("timestamp");
+    const apply = form.querySelector('[type="submit"]');
+    const status = form.querySelector("[data-filter-status]");
+    if (!(date instanceof HTMLSelectElement) ||
+        !(timestamp instanceof HTMLSelectElement) ||
+        !(apply instanceof HTMLButtonElement) ||
+        !(status instanceof HTMLElement)) return;
+
+    const params = new URLSearchParams();
+    for (const name of ["section", "instance", "subservice"]) {
+      const control = form.elements.namedItem(name);
+      if (!control || !("value" in control)) return;
+      params.set(name, control.value);
+    }
+    const affected = field.name === "date" ? [timestamp] : [date, timestamp];
+    if (field.name === "date") params.set("date", date.value);
+    const database = form.elements.namedItem("database");
+    if (database) database.replaceChildren(new Option("All databases", "all"));
+    updateInstanceSyncUrl(form);
+    const previous = new Map(affected.map((select) => [select, {
+      options: [...select.options].map((option) => ({text: option.text, value: option.value})),
+      value: select.value,
+      disabled: select.disabled,
+    }]));
+    affected.forEach((select) => {
+      select.replaceChildren(new Option("Loading…", ""));
+      select.disabled = true;
+      form.querySelector(`[data-filter-loader="${select.name}"]`).hidden = false;
+    });
+    apply.disabled = true;
+    status.textContent = "Loading available snapshots…";
+    try {
+      const response = await fetch(`/api/filter-options?${params}`, {
+        cache: "no-store",
+        headers: {"Accept": "application/json"},
+        signal: request.signal,
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not load filter options");
+      if (!Array.isArray(body.dates) || !Array.isArray(body.timestamps)) {
+        throw new Error("Filter response has an invalid format");
+      }
+      if (request !== pending || !form.isConnected) return;
+      for (const [select, values, selected] of [
+        [date, body.dates, body.date], [timestamp, body.timestamps, body.timestamp],
+      ]) {
+        select.replaceChildren(...values.map((value) => new Option(value, value)));
+        if (!values.length) select.add(new Option("No data available", ""));
+        select.value = selected || "";
+        select.disabled = !values.length;
+      }
+      apply.disabled = !body.timestamps.length;
+      status.textContent = body.timestamps.length ? "Ready to apply" : "No data for this selection.";
+
+    } catch (error) {
+      if (error.name === "AbortError" || request !== pending) return;
+      affected.forEach((select) => {
+        const saved = previous.get(select);
+        select.replaceChildren(...saved.options.map((option) => new Option(option.text, option.value)));
+        select.value = saved.value;
+        select.disabled = saved.disabled;
+      });
+      apply.disabled = true;
+      status.textContent = `${error.message}. Change a selection to retry.`;
+    } finally {
+      if (request === pending) {
+        form.querySelectorAll("[data-filter-loader]").forEach((loader) => { loader.hidden = true; });
+      }
+    }
+  });
+  document.addEventListener("submit", (event) => {
+    if (event.target.matches("[data-filter-form]") &&
+        event.target.querySelector('[type="submit"]').disabled) event.preventDefault();
+  });
+}
+
+function updateInstanceSyncUrl(filterForm) {
+  const syncForm = document.querySelector("[data-instance-sync-form]");
+  if (!(syncForm instanceof HTMLFormElement)) return;
+  const url = new URL(syncForm.action, window.location.href);
+  for (const name of ["section", "instance", "subservice", "database"]) {
+    const control = filterForm.elements.namedItem(name);
+    if (control && "value" in control && control.value) {
+      url.searchParams.set(name, control.value);
+    } else {
+      url.searchParams.delete(name);
+    }
+  }
+  syncForm.action = url.href;
 }

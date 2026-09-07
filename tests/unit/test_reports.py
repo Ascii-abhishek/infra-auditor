@@ -47,12 +47,12 @@ def test_build_fleet_report_combines_latest_snapshot_reports() -> None:
 
     report = build_fleet_report(
         [snapshot_report],
-        service="rds-postgres",
+        service="audit",
         environment="dev",
         region="ap-south-1",
     )
 
-    assert report.service == "rds-postgres"
+    assert report.service == "audit"
     assert report.instance_count == 1
     assert report.total_findings == 1
     assert report.severity_counts.medium == 1

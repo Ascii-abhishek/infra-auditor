@@ -27,10 +27,10 @@ from infra_auditor.storage.s3 import S3SnapshotWriter
 
 @dataclass(frozen=True)
 class SnapshotWriteResult:
-    """Result of collecting and persisting one snapshot."""
+    """Result of collecting and committing one artifact family."""
 
     snapshot: AuditSnapshot
-    snapshot_uri: str
+    manifest_uri: str
 
 
 def collect_and_write_instance(
@@ -39,7 +39,7 @@ def collect_and_write_instance(
     resource_config: ResourceConfig,
     alias: str,
 ) -> SnapshotWriteResult:
-    """Collect one instance snapshot and persist it to S3."""
+    """Collect one instance snapshot and commit its artifact family to S3."""
 
     session = create_boto3_session(settings)
     connection_factory = PostgresConnectionFactory(
@@ -71,8 +71,8 @@ def collect_and_write_instance(
             create_rds_client(session, region)
         ),
     )
-    snapshot_uri = S3SnapshotWriter(
+    manifest_uri = S3SnapshotWriter(
         create_s3_client(session, settings.aws_region),
         settings.snapshot_bucket,
     ).write(snapshot)
-    return SnapshotWriteResult(snapshot=snapshot, snapshot_uri=snapshot_uri)
+    return SnapshotWriteResult(snapshot=snapshot, manifest_uri=manifest_uri)
