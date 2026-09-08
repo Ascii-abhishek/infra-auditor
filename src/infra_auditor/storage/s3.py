@@ -14,8 +14,11 @@ from infra_auditor.models.snapshot_split import (
     build_snapshot_split_artifacts,
 )
 
-MANIFEST_SERVICE = "audit"
-MANIFEST_SUBSERVICE = "run-manifest"
+
+def artifact_root(subservice: str) -> str:
+    """Derived rule outputs are reports, never raw observations."""
+
+    return "reports" if subservice == "deterministic-findings" else "raw"
 
 
 class S3SnapshotWriter:
@@ -161,7 +164,7 @@ def build_artifact_key(
 
     return "/".join(
         [
-            "raw",
+            artifact_root(subservice),
             "snapshots",
             f"schema={schema_version}",
             f"env={environment}",
@@ -200,14 +203,11 @@ def build_run_manifest_key(
     utc_started_at = started_at.astimezone(UTC)
     return "/".join(
         [
-            "raw",
-            "snapshots",
+            "runs",
             f"schema={schema_version}",
             f"env={environment}",
-            f"service={MANIFEST_SERVICE}",
             f"region={region}",
             f"instance={instance_alias}",
-            f"subservice={MANIFEST_SUBSERVICE}",
             f"dt={utc_started_at:%Y-%m-%d}",
             f"{utc_started_at:%Y%m%dT%H%M%SZ}.json",
         ]

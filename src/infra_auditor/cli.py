@@ -45,6 +45,11 @@ def validate_config(
         f"OK: {len(resource_config.instances)} instance(s), "
         f"default region {resource_config.aws.default_region}"
     )
+    for alias in resource_config.instances:
+        coverage = resource_config.coverage_for_instance(alias)
+        typer.echo(f"{alias} ({resource_config.region_for_instance(alias)}):")
+        typer.echo(f"  rds: {', '.join(coverage.rds.subservices)}")
+        typer.echo(f"  postgres: {', '.join(coverage.postgres.subservices) or 'disabled'}")
 
 
 @discover_app.command("aws")

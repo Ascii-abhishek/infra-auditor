@@ -18,7 +18,7 @@ Typer CLI
   -> deterministic collectors
   -> deterministic rules
   -> typed in-memory collection result
-  -> canonical schema-2 S3 artifacts by service/subservice boundary
+  -> canonical schema-3 S3 artifacts by service/subservice boundary
   -> completion manifest written last
   -> snapshot/fleet report summary
   -> local FastAPI report console
@@ -30,7 +30,11 @@ typed snapshot/report -> optional LLM analyst
 
 ## Component Boundaries
 
-- `infra_auditor.config`: settings and non-secret YAML registry validation.
+- `infra_auditor.config`: settings, legacy registry and normalized execution plan.
+- `infra_auditor.service_registry`: service/region/instance tree validation and
+  the explicit RDS PostgreSQL dependency adapter.
+- `infra_auditor.capabilities`: shared approved service/subservice enums and
+  collector selection catalog.
 - `collectors.aws`: read-only AWS API boundaries for RDS discovery, attached
   security group ingress, CloudWatch RDS metrics, RDS recommendations, pending
   maintenance, and parameter groups.
@@ -131,12 +135,12 @@ shell bridges, or remediation.
 V0.1 writes canonical raw JSON evidence artifacts to S3:
 
 ```text
-s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=2/env=<dev-or-prod>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=3/env=<dev-or-prod>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 `SYS_ENV` is `dev` or `prod` and defaults to `dev` when unset. The writer uses
 conditional `PutObject` so existing artifacts are not overwritten. A small
-`audit/run-manifest` object is written last for each instance run and references
+`runs/` manifest object is written last for each instance run and references
 the complete artifact family. Full compatibility snapshots are no longer
 persisted. The in-memory aggregate remains available to collectors and reports.
 
@@ -149,7 +153,7 @@ The current artifact services/subservices are:
 - `postgres/role-security` for PostgreSQL role attributes and memberships.
 - `rds/ec2-security-groups` for attached EC2 security group ingress.
 - `rds/cloudwatch-rds-metrics` for CloudWatch RDS metric summaries.
-- `audit-heuristics/deterministic-findings` for deterministic findings.
+- `rds/deterministic-findings` and `postgres/deterministic-findings` under `reports/` for deterministic findings.
 
 Future non-instance services omit `instance`; non-regional evidence uses
 `region=global`, and services without a narrower boundary use
@@ -172,3 +176,19 @@ Terraform adoption is deferred until deployment requirements are finalized.
 ## Extensibility Model
 
 The project is `infra-auditor`, not `postgres-mcp`. Future collectors may live under service-specific packages such as `collectors/opensearch`, `collectors/qdrant`, or `collectors/airflow`. Use small protocols at external boundaries; do not force every service into a single inheritance hierarchy.
+
+## PostgreSQL-first configuration and purpose-separated persistence
+
+The version-3 registry groups targets as services/regions/instances and defines
+approved service coverage with per-instance list replacements. A reviewed adapter
+resolves explicit PostgreSQL-to-RDS dependencies into bounded paired jobs. The runtime executes only enabled collectors; YAML never
+contains executable SQL, imports or generic service API names. New instances use
+existing adapters; new service types require code, contracts and tests before
+configuration can select them. See [service catalog](docs/services/README.md).
+
+Schema 3 writes seven observations under `raw/`, two service findings under
+`reports/`, and completion manifests under `runs/`. See
+[storage layout](docs/storage-layout.md). Only RDS and PostgreSQL are audited
+services. Reports are derived from one manifest's coherent family; no raw facts
+are duplicated as a full snapshot. Deep PostgreSQL Audit is the next development
+milestone before other services and the LLM analyst.

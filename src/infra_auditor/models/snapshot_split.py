@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from infra_auditor.capabilities import ServiceName, SubserviceName
 from infra_auditor.collectors.aws.cloudwatch_metrics import RDSCloudWatchMetricsEvidence
 from infra_auditor.collectors.aws.models import RDSInstance
 from infra_auditor.collectors.aws.network import RDSSecurityGroupEvidence
@@ -18,28 +19,10 @@ from infra_auditor.models.common import CollectionGap, CollectionStatus, Collect
 from infra_auditor.models.finding import Finding
 from infra_auditor.models.snapshot import AuditSnapshot, InstanceSnapshot, RunMetadata
 
-SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION: Literal[2] = 2
+SnapshotSplitService = ServiceName
+SnapshotSplitSubservice = SubserviceName
 
-
-class SnapshotSplitService(StrEnum):
-    """Service/category partitions for split raw snapshot artifacts."""
-
-    RDS = "rds"
-    POSTGRES = "postgres"
-    AUDIT_HEURISTICS = "audit-heuristics"
-
-
-class SnapshotSplitSubservice(StrEnum):
-    """Subservice partitions inside a split raw snapshot service."""
-
-    RDS_INSTANCE = "instance"
-    RDS_OPERATIONS = "operations"
-    POSTGRES_DATABASE_INVENTORY = "database-inventory"
-    POSTGRES_ACTIVITY_SUMMARY = "activity-summary"
-    POSTGRES_ROLE_SECURITY = "role-security"
-    RDS_EC2_SECURITY_GROUPS = "ec2-security-groups"
-    RDS_CLOUDWATCH_METRICS = "cloudwatch-rds-metrics"
-    AUDIT_DETERMINISTIC_FINDINGS = "deterministic-findings"
+SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION: Literal[3] = 3
 
 
 class SnapshotSplitBoundary(StrEnum):
@@ -82,7 +65,7 @@ SNAPSHOT_SPLIT_DEFINITIONS = (
         service=SnapshotSplitService.POSTGRES,
         subservice=SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY,
         collector_boundary=SnapshotSplitBoundary.POSTGRES_DATABASE_INVENTORY,
-        collector_names=frozenset({"postgres.database_inventory"}),
+        collector_names=frozenset({"postgres.database_inventory", "secrets.postgres_credentials"}),
     ),
     SnapshotSplitDefinition(
         service=SnapshotSplitService.POSTGRES,
@@ -109,7 +92,13 @@ SNAPSHOT_SPLIT_DEFINITIONS = (
         collector_names=frozenset({"aws.cloudwatch.rds_metrics"}),
     ),
     SnapshotSplitDefinition(
-        service=SnapshotSplitService.AUDIT_HEURISTICS,
+        service=SnapshotSplitService.POSTGRES,
+        subservice=SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS,
+        collector_boundary=SnapshotSplitBoundary.DETERMINISTIC_FINDINGS,
+        collector_names=frozenset({"rules.deterministic_findings"}),
+    ),
+    SnapshotSplitDefinition(
+        service=SnapshotSplitService.RDS,
         subservice=SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS,
         collector_boundary=SnapshotSplitBoundary.DETERMINISTIC_FINDINGS,
         collector_names=frozenset({"rules.deterministic_findings"}),
@@ -133,7 +122,7 @@ ARTIFACT_SERVICE_SUBSERVICES: dict[SnapshotSplitService, tuple[SnapshotSplitSubs
 class SnapshotSplitMetadata(BaseModel):
     """Metadata for a split raw snapshot artifact."""
 
-    schema_version: Literal[2] = SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION
+    schema_version: Literal[3] = SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION
     service: SnapshotSplitService
     subservice: SnapshotSplitSubservice
     collector_boundary: SnapshotSplitBoundary
@@ -197,7 +186,7 @@ class SnapshotArtifactReference(BaseModel):
 class SnapshotRunManifest(BaseModel):
     """Completion marker and index for one coherent collection run."""
 
-    schema_version: Literal[2] = SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION
+    schema_version: Literal[3] = SNAPSHOT_SPLIT_ARTIFACT_SCHEMA_VERSION
     run_id: str
     application_version: str
     environment: str
@@ -315,7 +304,7 @@ def assemble_snapshot(
         if evidence.databases:
             updates["databases"] = evidence.databases
         if evidence.findings:
-            updates["findings"] = evidence.findings
+            updates["findings"] = [*instance.findings, *evidence.findings]
         if updates:
             instance = instance.model_copy(update=updates)
         for collector in evidence.collectors:
@@ -348,7 +337,9 @@ def _build_artifact(
 ) -> SnapshotSplitArtifact:
     collectors = _collectors_for(instance, definition.collector_names)
     gaps = _gaps_for(instance, definition.collector_names)
-    status = _boundary_status(collectors)
+    status = _boundary_status(
+        [collector for collector in collectors if collector.name != "secrets.postgres_credentials"]
+    )
     split_instance = SnapshotSplitInstance(
         alias=instance.alias,
         db_instance_identifier=instance.db_instance_identifier,
@@ -398,7 +389,16 @@ def _attach_boundary_evidence(
     if definition.collector_boundary == SnapshotSplitBoundary.RDS_CLOUDWATCH_METRICS:
         return split_instance.model_copy(update={"cloudwatch_metrics": instance.cloudwatch_metrics})
     if definition.collector_boundary == SnapshotSplitBoundary.DETERMINISTIC_FINDINGS:
-        return split_instance.model_copy(update={"findings": instance.findings})
+        return split_instance.model_copy(
+            update={
+                "findings": [
+                    finding
+                    for finding in instance.findings
+                    if ("postgres" in finding.category.split("/"))
+                    == (definition.service == SnapshotSplitService.POSTGRES)
+                ]
+            }
+        )
     return split_instance
 
 
@@ -443,6 +443,8 @@ def _boundary_status(collectors: list[CollectorResult]) -> CollectionStatus:
     if not collectors:
         return CollectionStatus.SKIPPED
     statuses = {collector.status for collector in collectors}
+    if CollectionStatus.PARTIAL_SUCCESS in statuses:
+        return CollectionStatus.PARTIAL_SUCCESS
     if CollectionStatus.FAILED in statuses:
         if statuses == {CollectionStatus.FAILED}:
             return CollectionStatus.FAILED

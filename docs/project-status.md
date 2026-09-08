@@ -1,12 +1,59 @@
 # Current Project Status
 
+## Latest diagnosis — 2026-09-08 S3 access
+
+Owner reports database permissions updated and Sync all attempted. Screenshot
+shows PutObject AccessDenied at `reports/snapshots/schema=3/`. Live read-only
+probes using profile `infra-auditor` (permission set `prm_rl_infra_auditor`) confirm
+raw listing/GetObject work, while exact report/manifest listings fail for both
+aliases. IAM policy inspection is denied, so the exact policy source is unverified.
+Likely old raw-only prefix coverage. No local evidence fallback exists.
+
+The manual fix and reusable S3-only JSON are in
+[the S3 access runbook](runbooks/s3-access-denied.md). Owner must merge S3 statements,
+provision the permission set, refresh/restart and retry Sync all. No IAM/S3 writes
+or database collection were performed during diagnosis. Earlier raw objects can
+remain; failed runs have no completion manifest. DB collection success remains to
+be checked after the S3 fix.
+
+## Current checkpoint — 2026-09-08
+
+- Owner reports prior changes committed and schema-1 removed from dev bucket.
+- Added version-3 service/region/instance YAML with explicit host dependencies;
+  disabled PostgreSQL coverage skips secrets and database access.
+- Schema 3 separates seven raw artifacts, two service finding reports, and one
+  completion manifest under sibling raw/reports/runs prefixes. Only RDS and
+  PostgreSQL service partitions remain. Old schema-2 objects are not modified.
+- CLI/UI/MCP expose effective safe coverage; future service navigation hidden.
+- Modular service docs, storage explanation, manual permission/setup runbook and
+  Deep PostgreSQL Audit roadmap added. No new per-database collectors yet.
+- Local checks: Ruff, mypy and pytest (66 tests) passed. No live AWS/PG collection,
+  IAM/grant changes or bucket cleanup in this session. Owner comprehension/live
+  validation remain pending before accepting this architecture checkpoint.
+
+Follow-up: the owner uses `grp_rl_infra_auditor` (NOLOGIN group) and
+`prj_rl_infra_auditor` (one LOGIN per server). Current role instructions and secret
+examples now use those names. `postgres-next-steps.md` contains one transactional
+manual SQL block for each server's monitoring memberships, login defaults,
+CONNECT grants and metadata-only privilege checks. No SQL was executed on AWS.
+The actual renamed file is `config/environments.yaml`; defaults/references and
+the local dotenv registry-path value were updated. `config/README.md` documents
+all supported strings, dependencies, overrides and multiple-region examples.
+
+Owner comprehension responses clarified: manifests commit stored families even
+with collector gaps; disabled means intentionally uncollected, not healthy or a
+broken collector. Live validation and next database-scope cross-check remain.
+
+Older entries below record historical implementations and live observations;
+this checkpoint supersedes their storage layout and next-task recommendations.
+
 ## Current Phase
 
 V0.1 repository bootstrap and minimal read-only collection foundation.
 
 ## What Works
 
-- `uv run infra-auditor config validate` validates settings and `config/environments.example.yaml`.
+- `uv run infra-auditor config validate` validates settings and `config/environments.yaml`.
 - `uv run infra-auditor discover aws --instance <alias>` can call read-only RDS discovery when AWS credentials/permissions exist.
 - `uv run infra-auditor collect --instance <alias>` builds a minimal snapshot path:
   RDS discovery, AWS security group ingress, CloudWatch RDS metric summaries,
@@ -104,26 +151,26 @@ V0.1 repository bootstrap and minimal read-only collection foundation.
 - On `raptor-catalog`, `pg_stat_statements` extension views are selectable in `datalyze_db`, `ptm_flow_prod`, and `raptor_catalog`. This is not application table access, but future query/stat collectors must not read query text without a documented minimization design.
 
 ## Open Decisions
-- Decide the first dedicated AWS account posture collector boundary
-  (credential report, IAM last-used, IAM Identity Center, or role/policy
-  inventory) before adding AWS/EC2 as live standalone UI domains.
-- Decide the first hosted/authenticated MCP and LLM-chat access design before
-  exposing MCP beyond local stdio.
+
+- Confirm per-database include/exclude scope, especially `unified_db_live` and
+  `raptor_db`, and intended ownership/permissions policy before the deep audit.
+- Future service and hosted LLM/MCP decisions are deferred behind PostgreSQL.
 
 ## Blockers
 
 - No current blocker for read-only RDS PostgreSQL snapshot collection.
-- The report console needs one schema-2 `Sync all` before it has readable live
-  history; existing schema-1 objects are intentionally ignored.
+- Schema-3 live validation remains: new reports/runs prefixes need IAM access and
+  a fresh Sync all. Existing schema-2 objects remain untouched.
 - Parquet/Glue/Athena, Performance Insights, SES, and ECS/EventBridge
   deployment remain unimplemented.
 
 ## Next Recommended Task
 
-Run `Sync all` in the sidebar or `sync_latest_audit_data` through MCP once to
-create schema-2 artifact families and manifests for every configured instance.
-Confirm report and Raw Data reads, then remove the pre-alpha schema-1 objects
-from S3. Afterward, design the LLM analyst boundary over reports/artifacts.
+Follow [practical next steps](runbooks/postgres-next-steps.md): validate coverage,
+update only the schema-3 S3 prefixes, restart, and Sync all to verify raw/report/run
+families on both instances. Then cross-check database scope and implement
+sequential per-database catalog collection. Deep PostgreSQL Audit precedes the
+LLM analyst and other services; see [coverage plan](services/postgres.md).
 
 ## Last Validation
 

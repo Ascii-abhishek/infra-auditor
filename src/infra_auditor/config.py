@@ -6,9 +6,24 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from infra_auditor.capabilities import (
+    CAPABILITIES_BY_KEY,
+    ServiceName,
+    SubserviceName,
+    default_subservices,
+    validate_subservices,
+)
 from infra_auditor.exceptions import ConfigurationError
 
 _INSTANCE_ALIAS_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
@@ -48,7 +63,7 @@ class AppSettings(BaseSettings):
     aws_profile: str | None = None
     log_level: str = "INFO"
     log_format: LogFormat = LogFormat.CONSOLE
-    resource_config_path: Path = Path("config/environments.example.yaml")
+    resource_config_path: Path = Path("config/environments.yaml")
     bootstrap_database: str = Field(default="postgres", min_length=1)
     postgres_ssl_mode: PostgresSSLMode = PostgresSSLMode.REQUIRE
     postgres_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
@@ -96,12 +111,59 @@ class AWSResourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RDSCoverage(BaseModel):
+    """Normalized RDS execution coverage."""
+
+    subservices: list[SubserviceName] = Field(
+        default_factory=lambda: default_subservices(ServiceName.RDS)
+    )
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("subservices")
+    @classmethod
+    def validate_selection(cls, value: list[SubserviceName]) -> list[SubserviceName]:
+        return validate_subservices(ServiceName.RDS, value)
+
+
+class PostgresCoverage(BaseModel):
+    """Normalized PostgreSQL coverage; empty disables DB access."""
+
+    subservices: list[SubserviceName] = Field(
+        default_factory=lambda: default_subservices(ServiceName.POSTGRES)
+    )
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("subservices")
+    @classmethod
+    def validate_selection(cls, value: list[SubserviceName]) -> list[SubserviceName]:
+        return validate_subservices(ServiceName.POSTGRES, value)
+
+
+class ServiceCoverage(BaseModel):
+    """Execution plan for the implemented RDS-hosted PostgreSQL adapter."""
+
+    rds: RDSCoverage = Field(default_factory=RDSCoverage)
+    postgres: PostgresCoverage = Field(default_factory=PostgresCoverage)
+    model_config = ConfigDict(extra="forbid")
+
+    def collector_names(self) -> frozenset[str]:
+        return frozenset(
+            CAPABILITIES_BY_KEY[(service, subservice)].collector
+            for service, selection in (
+                (ServiceName.RDS, self.rds),
+                (ServiceName.POSTGRES, self.postgres),
+            )
+            for subservice in selection.subservices
+        )
+
+
 class InstanceConfig(BaseModel):
     """Configured audit target. Secrets and live infrastructure metadata are excluded."""
 
     db_instance_identifier: str = Field(min_length=1)
-    secret_id: str = Field(min_length=1)
+    secret_id: str | None = Field(default=None, min_length=1)
     region: str | None = Field(default=None, min_length=1)
+    services: ServiceCoverage | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -109,9 +171,10 @@ class InstanceConfig(BaseModel):
 class ResourceConfig(BaseModel):
     """Validated registry of infrastructure resources to audit."""
 
-    version: Literal[1]
+    version: Literal[1, 2, 3]
     aws: AWSResourceConfig
     instances: dict[str, InstanceConfig]
+    services: ServiceCoverage = Field(default_factory=ServiceCoverage)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -124,6 +187,26 @@ class ResourceConfig(BaseModel):
         if invalid_aliases:
             raise ValueError(f"invalid instance aliases: {', '.join(sorted(invalid_aliases))}")
         return value
+
+    @model_validator(mode="after")
+    def validate_version(self) -> "ResourceConfig":
+        if self.version == 1 and (
+            "services" in self.model_fields_set
+            or any(instance.services is not None for instance in self.instances.values())
+        ):
+            raise ValueError("service selection requires registry version 2")
+        for alias, instance in self.instances.items():
+            if (
+                self.coverage_for_instance(alias).postgres.subservices
+                and instance.secret_id is None
+            ):
+                raise ValueError(
+                    f"enabled PostgreSQL collectors require a secret reference: {alias}"
+                )
+        return self
+
+    def coverage_for_instance(self, alias: str) -> ServiceCoverage:
+        return self.instances[alias].services or self.services
 
     def region_for_instance(self, alias: str) -> str:
         try:
@@ -151,6 +234,10 @@ def load_resource_config(path: Path) -> ResourceConfig:
         raise ConfigurationError(f"resource config must be a mapping: {config_path}")
 
     try:
+        if raw.get("version") == 3:
+            from infra_auditor.service_registry import ServiceRegistry
+
+            return ServiceRegistry.model_validate(raw).execution_config()
         return ResourceConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigurationError(f"resource config validation failed: {exc}") from exc

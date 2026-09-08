@@ -87,6 +87,7 @@ def collect_instance_snapshot(
         alias=alias,
         instance_config=instance_config,
         region=region,
+        enabled_collectors=resource_config.coverage_for_instance(alias).collector_names(),
         rds_discovery_factory=rds_discovery_factory,
         credential_provider_factory=credential_provider_factory,
         connection_factory=connection_factory,
@@ -141,6 +142,7 @@ def _collect_instance(
     alias: str,
     instance_config: InstanceConfig,
     region: str,
+    enabled_collectors: frozenset[str],
     rds_discovery_factory: RDSDiscoveryFactory,
     credential_provider_factory: CredentialProviderFactory,
     connection_factory: PostgresConnectionFactory,
@@ -175,35 +177,84 @@ def _collect_instance(
 
     assert aws_instance is not None
 
-    security_groups, result, gap = _collect_security_groups(
-        alias=alias,
-        region=region,
-        aws_instance=aws_instance,
-        collector_factory=security_group_collector_factory,
-    )
+    if "aws.ec2.security_group_ingress" in enabled_collectors:
+        security_groups, result, gap = _collect_security_groups(
+            alias=alias,
+            region=region,
+            aws_instance=aws_instance,
+            collector_factory=security_group_collector_factory,
+        )
+    else:
+        security_groups, result, gap = (
+            None,
+            _skipped_collector(
+                name="aws.ec2.security_group_ingress", summary="Disabled by service configuration."
+            ),
+            None,
+        )
     collectors.append(result)
     if gap is not None:
         gaps.append(gap)
 
-    cloudwatch_metrics, result, gap = _collect_cloudwatch_metrics(
-        alias=alias,
-        region=region,
-        aws_instance=aws_instance,
-        collector_factory=cloudwatch_metrics_collector_factory,
-    )
+    if "aws.cloudwatch.rds_metrics" in enabled_collectors:
+        cloudwatch_metrics, result, gap = _collect_cloudwatch_metrics(
+            alias=alias,
+            region=region,
+            aws_instance=aws_instance,
+            collector_factory=cloudwatch_metrics_collector_factory,
+        )
+    else:
+        cloudwatch_metrics, result, gap = (
+            None,
+            _skipped_collector(
+                name="aws.cloudwatch.rds_metrics", summary="Disabled by service configuration."
+            ),
+            None,
+        )
     collectors.append(result)
     if gap is not None:
         gaps.append(gap)
 
-    rds_operations, result, gap = _collect_rds_operations(
-        alias=alias,
-        region=region,
-        aws_instance=aws_instance,
-        collector_factory=rds_operations_collector_factory,
-    )
+    if "aws.rds.operations" in enabled_collectors:
+        rds_operations, result, gap = _collect_rds_operations(
+            alias=alias,
+            region=region,
+            aws_instance=aws_instance,
+            collector_factory=rds_operations_collector_factory,
+        )
+    else:
+        rds_operations, result, gap = (
+            None,
+            _skipped_collector(
+                name="aws.rds.operations", summary="Disabled by service configuration."
+            ),
+            None,
+        )
     collectors.append(result)
     if gap is not None:
         gaps.append(gap)
+
+    if not any(name.startswith("postgres.") for name in enabled_collectors):
+        collectors.extend(
+            _skipped_collector(name=name, summary="Disabled by service configuration.")
+            for name in (
+                database_collector.name,
+                activity_collector.name,
+                role_security_collector.name,
+            )
+        )
+        return InstanceSnapshot(
+            alias=alias,
+            db_instance_identifier=instance_config.db_instance_identifier,
+            region=region,
+            status=CollectionStatus.PARTIAL_SUCCESS if gaps else CollectionStatus.SUCCESS,
+            aws_instance=aws_instance,
+            aws_security_groups=security_groups,
+            cloudwatch_metrics=cloudwatch_metrics,
+            rds_operations=rds_operations,
+            collectors=collectors,
+            gaps=gaps,
+        )
 
     credentials, result, gap = _resolve_credentials(
         alias=alias,
@@ -249,6 +300,7 @@ def _collect_instance(
 
     databases, postgres_activity, role_security, postgres_results, postgres_gaps = (
         _collect_postgres_evidence(
+            enabled_collectors=enabled_collectors,
             settings=settings,
             alias=alias,
             aws_instance=aws_instance,
@@ -527,6 +579,8 @@ def _resolve_credentials(
 ) -> tuple[PostgresCredentials | None, CollectorResult, CollectionGap | None]:
     started_at = utc_now()
     try:
+        if instance_config.secret_id is None:
+            raise ValueError("enabled PostgreSQL collectors require a secret reference")
         provider = credential_provider_factory(region)
         credentials = provider.get_postgres_credentials(instance_config.secret_id)
     except Exception as exc:  # noqa: BLE001 - converted into structured collection gap.
@@ -570,6 +624,7 @@ def _resolve_credentials(
 
 def _collect_postgres_evidence(
     *,
+    enabled_collectors: frozenset[str],
     settings: AppSettings,
     alias: str,
     aws_instance: RDSInstance,
@@ -593,93 +648,52 @@ def _collect_postgres_evidence(
             database=settings.bootstrap_database,
         ) as connection:
             return _collect_postgres_evidence_from_connection(
+                enabled_collectors=enabled_collectors,
                 connection=connection,
                 alias=alias,
-                aws_instance=aws_instance,
-                settings=settings,
                 database_collector=database_collector,
                 activity_collector=activity_collector,
                 role_security_collector=role_security_collector,
             )
     except Exception as exc:  # noqa: BLE001 - converted into structured collection gap.
         completed_at = utc_now()
-        logger.warning(
-            "collector_failed",
-            collector=database_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
-        logger.warning(
-            "collector_failed",
-            collector=activity_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
-        logger.warning(
-            "collector_failed",
-            collector=role_security_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
+        names = (database_collector.name, activity_collector.name, role_security_collector.name)
         return (
             [],
             None,
             None,
             [
                 _collector_result(
-                    name=database_collector.name,
-                    status=CollectionStatus.FAILED,
+                    name=name,
+                    status=CollectionStatus.FAILED
+                    if name in enabled_collectors
+                    else CollectionStatus.SKIPPED,
                     started_at=connection_started_at,
                     completed_at=completed_at,
-                ),
-                _collector_result(
-                    name=activity_collector.name,
-                    status=CollectionStatus.FAILED,
-                    started_at=connection_started_at,
-                    completed_at=completed_at,
-                ),
-                _collector_result(
-                    name=role_security_collector.name,
-                    status=CollectionStatus.FAILED,
-                    started_at=connection_started_at,
-                    completed_at=completed_at,
-                ),
+                    summary=None
+                    if name in enabled_collectors
+                    else "Disabled by service configuration.",
+                )
+                for name in names
             ],
             [
                 CollectionGap(
-                    collector=database_collector.name,
+                    collector=name,
                     resource=alias,
                     error_type=type(exc).__name__,
-                    message=str(exc),
-                ),
-                CollectionGap(
-                    collector=activity_collector.name,
-                    resource=alias,
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                ),
-                CollectionGap(
-                    collector=role_security_collector.name,
-                    resource=alias,
-                    error_type=type(exc).__name__,
-                    message=str(exc),
-                ),
+                    message="PostgreSQL connection failed; inspect connectivity and permissions.",
+                )
+                for name in names
+                if name in enabled_collectors
             ],
         )
 
 
 def _collect_postgres_evidence_from_connection(
     *,
+    enabled_collectors: frozenset[str],
     connection: Any,
     alias: str,
-    aws_instance: RDSInstance,
-    settings: AppSettings,
     database_collector: DatabaseDiscoveryCollector,
     activity_collector: ActivitySummaryCollector,
     role_security_collector: RoleSecurityCollector,
@@ -693,138 +707,59 @@ def _collect_postgres_evidence_from_connection(
     collectors: list[CollectorResult] = []
     gaps: list[CollectionGap] = []
 
-    database_started_at = utc_now()
-    try:
-        databases = database_collector.collect(connection)
-    except Exception as exc:  # noqa: BLE001 - converted into structured collection gap.
-        completed_at = utc_now()
-        logger.warning(
-            "collector_failed",
-            collector=database_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
-        databases = []
-        collectors.append(
-            _collector_result(
-                name=database_collector.name,
-                status=CollectionStatus.FAILED,
-                started_at=database_started_at,
-                completed_at=completed_at,
+    def collect[T](name: str, action: Callable[[], T], empty: T) -> T:
+        if name not in enabled_collectors:
+            collectors.append(
+                _skipped_collector(name=name, summary="Disabled by service configuration.")
             )
-        )
-        gaps.append(
-            CollectionGap(
-                collector=database_collector.name,
-                resource=alias,
+            return empty
+        started_at = utc_now()
+        try:
+            evidence = action()
+        except Exception as exc:  # noqa: BLE001 - preserve independent collector failures.
+            logger.warning(
+                "collector_failed",
+                collector=name,
+                instance_alias=alias,
                 error_type=type(exc).__name__,
-                message=str(exc),
             )
-        )
-    else:
-        completed_at = utc_now()
+            collectors.append(
+                _collector_result(
+                    name=name,
+                    status=CollectionStatus.FAILED,
+                    started_at=started_at,
+                    completed_at=utc_now(),
+                )
+            )
+            gaps.append(
+                CollectionGap(
+                    collector=name,
+                    resource=alias,
+                    error_type=type(exc).__name__,
+                    message="PostgreSQL evidence collection failed.",
+                )
+            )
+            return empty
         collectors.append(
             _collector_result(
-                name=database_collector.name,
+                name=name,
                 status=CollectionStatus.SUCCESS,
-                started_at=database_started_at,
-                completed_at=completed_at,
-                summary=f"Discovered {len(databases)} databases.",
+                started_at=started_at,
+                completed_at=utc_now(),
             )
         )
+        return evidence
 
-    activity_started_at = utc_now()
-    try:
-        postgres_activity = activity_collector.collect(connection)
-    except Exception as exc:  # noqa: BLE001 - converted into structured collection gap.
-        completed_at = utc_now()
-        logger.warning(
-            "collector_failed",
-            collector=activity_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
-        postgres_activity = None
-        collectors.append(
-            _collector_result(
-                name=activity_collector.name,
-                status=CollectionStatus.FAILED,
-                started_at=activity_started_at,
-                completed_at=completed_at,
-            )
-        )
-        gaps.append(
-            CollectionGap(
-                collector=activity_collector.name,
-                resource=alias,
-                error_type=type(exc).__name__,
-                message=str(exc),
-            )
-        )
-    else:
-        completed_at = utc_now()
-        assert postgres_activity is not None
-        collectors.append(
-            _collector_result(
-                name=activity_collector.name,
-                status=CollectionStatus.SUCCESS,
-                started_at=activity_started_at,
-                completed_at=completed_at,
-                summary=(
-                    f"Summarized {postgres_activity.total_connections} connections "
-                    f"across {len(postgres_activity.groups)} groups."
-                ),
-            )
-        )
-
-    role_security_started_at = utc_now()
-    try:
-        role_security = role_security_collector.collect(connection)
-    except Exception as exc:  # noqa: BLE001 - converted into structured collection gap.
-        completed_at = utc_now()
-        logger.warning(
-            "collector_failed",
-            collector=role_security_collector.name,
-            instance_alias=alias,
-            db_instance_identifier=aws_instance.identifier,
-            database=settings.bootstrap_database,
-            error_type=type(exc).__name__,
-        )
-        collectors.append(
-            _collector_result(
-                name=role_security_collector.name,
-                status=CollectionStatus.FAILED,
-                started_at=role_security_started_at,
-                completed_at=completed_at,
-            )
-        )
-        gaps.append(
-            CollectionGap(
-                collector=role_security_collector.name,
-                resource=alias,
-                error_type=type(exc).__name__,
-                message=str(exc),
-            )
-        )
-        return databases, postgres_activity, None, collectors, gaps
-
-    completed_at = utc_now()
-    role_count = len(role_security.roles)
-    membership_count = len(role_security.memberships)
-    collectors.append(
-        _collector_result(
-            name=role_security_collector.name,
-            status=CollectionStatus.SUCCESS,
-            started_at=role_security_started_at,
-            completed_at=completed_at,
-            summary=f"Discovered {role_count} roles and {membership_count} memberships.",
-        )
+    databases: list[DatabaseInfo] = collect(
+        database_collector.name, lambda: database_collector.collect(connection), []
     )
-    return databases, postgres_activity, role_security, collectors, gaps
+    activity = collect(
+        activity_collector.name, lambda: activity_collector.collect(connection), None
+    )
+    roles = collect(
+        role_security_collector.name, lambda: role_security_collector.collect(connection), None
+    )
+    return databases, activity, roles, collectors, gaps
 
 
 def _collector_result(

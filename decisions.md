@@ -802,3 +802,95 @@ prefixes.
 ### Future reconsideration trigger
 When production requires schema migration compatibility, independently scheduled
 subservice collectors, a latest-state index, or curated Parquet/Athena storage.
+
+## DEC-0020 - PostgreSQL-first configured coverage and purpose-separated storage
+
+Date: 2026-09-08
+Status: Implemented locally; owner comprehension and live validation pending
+
+Supersedes DEC-0019 storage layout and next-phase details. Active services are
+PostgreSQL and its RDS host. Deep PostgreSQL Audit now precedes LLM analysis and
+other service adapters.
+
+Registry version 2 adds allowlisted global service/subservice coverage and complete
+per-instance replacement overrides. Version 1 retains all current collectors.
+RDS instance discovery is required; PostgreSQL may be entirely disabled, which
+skips credential resolution and database connections. Unknown/unimplemented
+capabilities fail validation. SQL, imports, endpoints, credentials, arbitrary API
+names and paths cannot be supplied as service configuration. New service types
+need reviewed code/contracts; adding targets for existing types is YAML-driven.
+Rules and thresholds remain code-owned until a separate policy contract exists.
+
+Schema 3 writes seven raw boundary artifacts, two derived finding artifacts split
+by RDS/PostgreSQL under sibling `reports/`, then one completion manifest under
+sibling `runs/`. Disabled boundaries remain explicit skipped artifacts so readers
+still validate a complete fixed allowlist before dereferencing keys. The old
+`audit` and `audit-heuristics` pseudo-services are removed. Credential-resolution
+metadata/gaps now survive report assembly via the inventory boundary; secret
+values and IDs are never included.
+
+The schema bump avoids mixing incompatible families. Schema-2 data is untouched
+and intentionally not listed by current readers; no migration/delete action is
+included. Append-only conditional writes remain. Required IAM object access is
+limited to `raw/snapshots/schema=3/*`, `reports/snapshots/schema=3/*` and
+`runs/schema=3/*` in the configured environment bucket. No production resource,
+role, grant or security-policy mutation is performed by the runtime.
+
+Reports persist full deterministic findings while UI/JSON/Markdown summaries are
+built on demand from one committed family. No duplicate full snapshot or rendered
+report cache is introduced. Collector status and evidence remain distinct from
+policy compliance. Today sync remains date-based; config changes require explicit
+latest sync. UI/MCP startup reload is needed after registry edits.
+
+Alternatives: retain findings/bookkeeping as services; silently change schema 2;
+or build a generic executable YAML plugin engine. Rejected for misleading service
+ownership, compatibility ambiguity and uncontrolled capability expansion.
+
+Validation: configuration rejection/override checks, disabled external-call
+checks, coherent artifact round trips, incomplete-write manifest suppression,
+UI/MCP tests, Ruff and mypy. Next production milestone requires owner scope
+cross-check and the repository comprehension gate. No dependencies added.
+
+## DEC-0021 - Service/region/instance registry and existing auditor identities
+
+Date: 2026-09-08
+Status: Implemented locally; live validation pending
+
+Supersedes DEC-0020 registry shape, preserving its artifact schema/layout.
+The owner requested a consistent service tree, adjacent vocabulary reference,
+and manual permission setup for the existing infra-auditor group/login.
+
+Registry version 3 uses `services/<service>/regions/<region>/instances/<alias>`.
+Service defaults and instance subservice list replacements select code-owned
+capabilities. Explicit PostgreSQL `depends_on` references resolve RDS discovery;
+Secrets Manager references belong to PostgreSQL targets. The shared shape is
+validated independently of the reviewed RDS PostgreSQL execution adapter.
+
+The adapter currently requires matched PG/RDS aliases and regions, unique aliases
+across regions within each service, and one job per RDS host. Existing CLI/UI/MCP
+selectors remain alias-based; ambiguous targets fail instead of silently routing
+to a region. An absent/disabled PG target produces an RDS-only job without secrets.
+Future independent services or duplicate-alias selectors require adapter/interface
+work. This avoids presenting a generic YAML executor as a supported capability.
+The central capability catalog shares enums with persistence and config validation.
+
+`config/environments.yaml` is the owner's actual renamed file. The default, docs,
+example dotenv and stale local dotenv registry-path value now use it. An adjacent
+README documents every supported service/subservice, field, dependency, override,
+region/alias restriction and variation. Version 1/2 files retain legacy loading.
+Registry version 3 is independent of stored schema 3; S3 does not change again.
+Fleet summaries report `multi-region` when their source snapshots span regions.
+
+Current identities are `grp_rl_infra_auditor` (NOLOGIN) and
+`prj_rl_infra_auditor` (LOGIN). One login can connect across databases on one
+server; the same names on different servers still denote separate local roles.
+Credentials remain per-instance Secrets Manager values, never YAML/.env. The
+manual SQL block uses existing roles, monitoring memberships, login defaults,
+CONNECT on current eligible databases and metadata-only checks. It makes no
+application-row grants and is never invoked by the auditor or MCP. Historical
+observations under old role names are preserved as history, not reverified facts.
+
+Validation covers multiple regions, instance overrides, disabled PG without
+secrets, missing/wrong dependencies, wrong-service/report-only selections,
+ambiguous aliases, and catalog/artifact agreement. No dependencies added and no
+live AWS, IAM, database grants or S3 mutations performed.

@@ -8,12 +8,11 @@
 - Secrets Manager credential boundary.
 - PostgreSQL connection foundation.
 - Database inventory collector.
-- Canonical schema-2 S3 JSON artifacts and completion manifest.
+- Canonical schema-3 S3 JSON artifacts and completion manifest.
 - Initial role security, activity summary, AWS operations, and network/metric
   evidence collectors.
 - Initial snapshot/fleet report model and local FastAPI report console.
-- Service-section UI shell for RDS, Database (PG), Reports, Raw Data, planned
-  services, and future Chat.
+- Service-section UI shell for RDS, Database (PG), Reports, Raw Data, future Chat.
 - Raw S3 artifacts for RDS, PostgreSQL, and
   deterministic-finding boundaries.
 - Base MCP interface over approved snapshot/report data with controlled
@@ -42,23 +41,34 @@
 - Add connection/session/lock collectors with query text minimization. Initial activity summary implemented; lock detail remains.
 - Add partial failure test coverage for per-database collectors.
 
+## Phase 0.5 - Deep PostgreSQL Audit (next development milestone)
+
+Complete the schema-3 coverage/storage checkpoint and live validation first.
+The owner reports the prior commit and schema-1 bucket cleanup complete.
+
+1. Agree database scope; add sequential per-database orchestration with independent
+   gaps, CONNECT checks and bounded connections.
+2. Collect catalog inventory without application rows or executable source text.
+3. Design validated ownership/ACL/default-privilege/RLS policy and effective
+   permission analysis, distinguishing confirmed violations from review candidates.
+4. Add table/vacuum/freeze and index-health evidence with observation quality.
+5. Add routine/trigger security and dependency analysis.
+6. Add locks/blocking and bounded query-ID performance evidence.
+7. Add history/lifecycle and manual repair plans with prerequisites, validation,
+   rollback and confidence. No automatic remediation.
+
+See [PostgreSQL module plan](services/postgres.md). Cross-check each production
+milestone with the owner; do not treat this list as authorization to change roles,
+install extensions, or broaden data access automatically.
+
 ## Later
 
-- Broader AWS account posture collectors: IAM Identity Center users, permission
-  sets, roles, policies, access key metadata, and last-used evidence, added one
-  read-only permission group at a time.
-- Broader EC2 collectors: configured EC2 inventory, CPU/memory/disk/network
-  metrics, health/status checks, security groups, volumes, and backup posture.
-- Deeper Database (PG) collectors: table/index size, stale indexes, duplicate
-  indexes, bloat indicators, permission drift, redundant users, lock detail,
-  connection pressure, and safe pg_stat_statements-derived summaries without
-  unrestricted query text.
-- Parquet/Glue/Athena historical storage.
-- Historical indexes and richer artifact-native UI/report reads.
-- Hosted/authenticated MCP exposure after an approved access design.
-- Richer HTML/JSON/Markdown reports and SES daily email.
-- Docker/ECR/ECS/EventBridge deployment.
-- Pydantic AI LLM analyst after deterministic findings exist.
+- LLM explanation and prioritization over approved MCP evidence after deep
+  PostgreSQL collection, policy and findings are validated.
+- Historical storage (Parquet/Glue/Athena) when observation requirements justify it.
+- Hosted/authenticated MCP, SES summaries, Docker/ECS/EventBridge deployment.
+- Additional services such as Elasticsearch and AWS account/EC2 posture only
+  after the PostgreSQL milestone; each needs a reviewed adapter and permissions.
 
 ## Deferred Decisions
 

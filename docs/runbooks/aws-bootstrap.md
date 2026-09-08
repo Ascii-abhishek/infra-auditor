@@ -13,10 +13,10 @@ Expected order:
 3. Configure the local `infra-auditor-dev` SSO profile.
 4. Create the two PostgreSQL Secrets Manager entries.
 5. Create the `infra-audit-rl-dev` and `infra-audit-rl-prod` S3 buckets.
-6. Grant S3 `PutObject` to the approved `raw/snapshots/*` prefix.
+6. Grant S3 `PutObject` to the approved schema-3 raw, reports and runs prefixes.
 7. Grant read-only EC2 security group, CloudWatch metric, and RDS operations
    permissions used by the implemented collectors.
-8. Grant S3 `ListBucket` and `GetObject` for `raw/snapshots/*` to identities
+8. Grant S3 `ListBucket` and `GetObject` for those same prefixes to identities
    that need the local report UI, MCP, or future read APIs.
 9. Run read-only RDS discovery.
 10. Run local read-only PostgreSQL collection.

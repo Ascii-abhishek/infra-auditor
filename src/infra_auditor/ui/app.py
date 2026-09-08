@@ -20,7 +20,12 @@ from infra_auditor.exceptions import InfraAuditorError
 from infra_auditor.logging import configure_logging
 from infra_auditor.models.finding import FindingSeverity
 from infra_auditor.models.snapshot import InstanceSnapshot
-from infra_auditor.models.snapshot_split import SnapshotSplitService, SnapshotSplitSubservice
+from infra_auditor.models.snapshot_split import (
+    SNAPSHOT_SPLIT_DEFINITIONS,
+    SnapshotSplitBoundary,
+    SnapshotSplitService,
+    SnapshotSplitSubservice,
+)
 from infra_auditor.reports import (
     build_fleet_report,
     build_snapshot_report,
@@ -62,34 +67,6 @@ NAV_ITEMS = (
         "icon": "bi-database",
         "href_extra": "instance",
         "state": "Live",
-    },
-    {
-        "id": "aws",
-        "label": "AWS",
-        "icon": "bi-cloud",
-        "href_extra": "",
-        "state": "Planned",
-    },
-    {
-        "id": "ec2",
-        "label": "EC2",
-        "icon": "bi-diagram-3",
-        "href_extra": "",
-        "state": "Planned",
-    },
-    {
-        "id": "elasticsearch",
-        "label": "Elasticsearch",
-        "icon": "bi-search",
-        "href_extra": "",
-        "state": "Planned",
-    },
-    {
-        "id": "bitbucket",
-        "label": "Bitbucket",
-        "icon": "bi-git",
-        "href_extra": "",
-        "state": "Planned",
     },
     {
         "id": "reports",
@@ -137,46 +114,21 @@ SECTION_SUBSERVICES: dict[str, tuple[dict[str, str], ...]] = {
             "label": "Role security",
         },
     ),
-    "raw": (
-        {"id": SnapshotSplitSubservice.RDS_INSTANCE.value, "label": "RDS instance"},
-        {"id": SnapshotSplitSubservice.RDS_OPERATIONS.value, "label": "RDS operations"},
-        {
-            "id": SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY.value,
-            "label": "Postgres inventory",
-        },
-        {
-            "id": SnapshotSplitSubservice.POSTGRES_ACTIVITY_SUMMARY.value,
-            "label": "Postgres activity",
-        },
-        {
-            "id": SnapshotSplitSubservice.POSTGRES_ROLE_SECURITY.value,
-            "label": "Postgres roles",
-        },
-        {
-            "id": SnapshotSplitSubservice.RDS_EC2_SECURITY_GROUPS.value,
-            "label": "RDS security groups",
-        },
-        {
-            "id": SnapshotSplitSubservice.RDS_CLOUDWATCH_METRICS.value,
-            "label": "RDS metrics",
-        },
-        {
-            "id": SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS.value,
-            "label": "Deterministic findings",
-        },
-    ),
 }
+RAW_DEFINITIONS = tuple(
+    definition
+    for definition in SNAPSHOT_SPLIT_DEFINITIONS
+    if definition.collector_boundary != SnapshotSplitBoundary.DETERMINISTIC_FINDINGS
+)
+SECTION_SUBSERVICES["raw"] = tuple(
+    {
+        "id": definition.subservice.value,
+        "label": f"{definition.service.value.upper()} / {definition.subservice.value}",
+    }
+    for definition in RAW_DEFINITIONS
+)
 RAW_ARTIFACT_SUBSERVICE_SERVICES: dict[str, SnapshotSplitService] = {
-    SnapshotSplitSubservice.RDS_INSTANCE.value: SnapshotSplitService.RDS,
-    SnapshotSplitSubservice.RDS_OPERATIONS.value: SnapshotSplitService.RDS,
-    SnapshotSplitSubservice.POSTGRES_DATABASE_INVENTORY.value: SnapshotSplitService.POSTGRES,
-    SnapshotSplitSubservice.POSTGRES_ACTIVITY_SUMMARY.value: SnapshotSplitService.POSTGRES,
-    SnapshotSplitSubservice.POSTGRES_ROLE_SECURITY.value: SnapshotSplitService.POSTGRES,
-    SnapshotSplitSubservice.RDS_EC2_SECURITY_GROUPS.value: SnapshotSplitService.RDS,
-    SnapshotSplitSubservice.RDS_CLOUDWATCH_METRICS.value: SnapshotSplitService.RDS,
-    SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS.value: (
-        SnapshotSplitService.AUDIT_HEURISTICS
-    ),
+    definition.subservice.value: definition.service for definition in RAW_DEFINITIONS
 }
 
 
@@ -394,6 +346,7 @@ def create_app(
             selected_subservice=selected_subservice,
             selected_subservice_label=_subservice_label(selected_section, selected_subservice),
             subservice_options=_subservice_options(selected_section),
+            configured_coverage=resource_config.coverage_for_instance(selected_instance),
             selected_date=selected_date,
             selected_timestamp=selected_timestamp,
             date_options=date_options,

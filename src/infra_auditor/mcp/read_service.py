@@ -32,7 +32,7 @@ from infra_auditor.sync import (
     sync_audit_data,
 )
 
-ArtifactServiceName = Literal["rds", "postgres", "audit-heuristics"]
+ArtifactServiceName = Literal["rds", "postgres"]
 ArtifactSubserviceName = Literal[
     "instance",
     "operations",
@@ -55,6 +55,7 @@ class AuditInstanceSummary(BaseModel):
     alias: str
     db_instance_identifier: str
     region: str
+    services: dict[str, list[str]] = Field(default_factory=dict)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -152,7 +153,7 @@ class AuditReadService:
             controlled_sync_capability=(
                 "sync_latest_audit_data and sync_today_audit_data may run the "
                 "existing read-only collector for configured aliases and write "
-                "immutable schema-2 S3 artifacts and writes a run manifest last; "
+                "immutable schema-3 S3 artifacts and writes a run manifest last; "
                 "the today mode skips aliases with a completed manifest for the "
                 "current UTC day"
             ),
@@ -166,6 +167,12 @@ class AuditReadService:
                 alias=alias,
                 db_instance_identifier=instance.db_instance_identifier,
                 region=self._resource_config.region_for_instance(alias),
+                services={
+                    "rds": list(self._resource_config.coverage_for_instance(alias).rds.subservices),
+                    "postgres": list(
+                        self._resource_config.coverage_for_instance(alias).postgres.subservices
+                    ),
+                },
             )
             for alias, instance in self._resource_config.instances.items()
         ]

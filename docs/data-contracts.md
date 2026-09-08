@@ -5,11 +5,11 @@
 Application version and snapshot schema version are separate:
 
 - `application_version`: semantic project version, currently `0.1.0`.
-- `snapshot_schema_version`: evidence family version, currently `2`.
+- `snapshot_schema_version`: evidence family version, currently `3`.
 
 Compatibility changes to persisted models must update this document and usually `decisions.md`.
-The S3 object key includes one `schema=2` partition so incompatible persisted
-contracts cannot be mixed. Schema 1 is intentionally unsupported before alpha.
+The S3 object key includes one `schema=3` partition so incompatible persisted
+contracts cannot be mixed. Schemas 1 and 2 are intentionally unsupported by the current reader before alpha.
 
 ## Run Metadata
 
@@ -118,7 +118,7 @@ rules may add expected/policy values and confidence where meaningful.
 persisted. Each collection writes canonical service/subservice artifacts under:
 
 ```text
-raw/snapshots/schema=2/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+raw/snapshots/schema=3/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 `SnapshotSplitArtifact` contains:
@@ -140,8 +140,8 @@ Current artifact boundaries:
   `postgres/database-inventory`, `postgres/activity-summary`, and
   `postgres/role-security` separate database inventory, activity summary, and role
   security evidence.
-- Audit heuristics:
-  `audit-heuristics/deterministic-findings` includes deterministic findings.
+- Derived reports (outside raw):
+  `rds/deterministic-findings` and `postgres/deterministic-findings` under `reports/` includes deterministic findings.
 
 Canonical artifacts must not introduce secret values, unrestricted query text,
 application table rows, generic SQL, arbitrary AWS calls, or remediation data.
@@ -149,7 +149,7 @@ application table rows, generic SQL, arbitrary AWS calls, or remediation data.
 ## Run Manifest
 
 After every artifact write succeeds, the writer commits a small
-`SnapshotRunManifest` under `service=audit/subservice=run-manifest`. It contains
+`SnapshotRunManifest` under `runs/schema=3/env=<env>/region=<region>/instance=<alias>/...`. It contains
 the run identity, timestamps, overall status, and the exact approved artifact
 keys/statuses. Readers treat a manifest as the completion marker and reconstruct
 reports only from its referenced family. A failed partial write has no manifest
@@ -170,3 +170,13 @@ combined severity counts, total findings, instance count, and the underlying
 
 Reports do not replace raw artifacts. They are the stable reader-facing shape
 for the local UI and MCP tools.
+
+## Schema-3 purpose split
+
+The canonical family is seven raw boundaries plus `deterministic-findings` for
+each of RDS and PostgreSQL under `reports/`. The old audit pseudo-services no
+longer exist. The manifest lives under `runs/` and references all nine artifacts.
+Disabled collectors retain explicit SKIPPED results. Credential-resolution
+metadata/gaps are retained with the inventory boundary; no credential values or
+secret IDs are serialized. Report assembly combines both services' findings and
+deduplicates shared collector metadata. See [layout](storage-layout.md).

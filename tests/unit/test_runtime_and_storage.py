@@ -228,10 +228,10 @@ def test_collect_instance_snapshot_success_and_s3_write() -> None:
     uri = S3SnapshotWriter(client, settings.snapshot_bucket).write(snapshot)
 
     assert uri.startswith(
-        "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/service=audit/"
-        "region=ap-south-1/instance=raptor-catalog/subservice=run-manifest/dt="
+        "s3://infra-audit-rl-dev/runs/schema=3/env=dev/"
+        "region=ap-south-1/instance=raptor-catalog/dt="
     )
-    assert len(client.put_object_calls) == 9
+    assert len(client.put_object_calls) == 10
     put_object = client.put_object_calls[0]
     assert put_object["Bucket"] == "infra-audit-rl-dev"
     assert put_object["ContentType"] == "application/json"
@@ -239,7 +239,7 @@ def test_collect_instance_snapshot_success_and_s3_write() -> None:
     assert put_object["IfNoneMatch"] == "*"
     assert put_object["Metadata"]["run-id"] == "run-123"
     assert put_object["Key"].startswith(
-        "raw/snapshots/schema=2/env=dev/service=rds/region=ap-south-1/"
+        "raw/snapshots/schema=3/env=dev/service=rds/region=ap-south-1/"
         "instance=raptor-catalog/subservice=instance/dt="
     )
     split_keys = [call["Key"] for call in client.put_object_calls[:-1]]
@@ -276,13 +276,12 @@ def test_collect_instance_snapshot_success_and_s3_write() -> None:
         for key in split_keys
     )
     assert any(
-        "service=audit-heuristics/region=ap-south-1/instance=raptor-catalog/"
+        "service=postgres/region=ap-south-1/instance=raptor-catalog/"
         "subservice=deterministic-findings" in key
         for key in split_keys
     )
     assert client.put_object_calls[-1]["Key"].startswith(
-        "raw/snapshots/schema=2/env=dev/service=audit/region=ap-south-1/"
-        "instance=raptor-catalog/subservice=run-manifest/dt="
+        "runs/schema=3/env=dev/region=ap-south-1/instance=raptor-catalog/dt="
     )
     assert all(b"fake-password" not in call["Body"] for call in client.put_object_calls)
 
@@ -341,4 +340,65 @@ def test_collect_instance_snapshot_secret_failure_is_partial_success() -> None:
     assert any(
         collector.name == "postgres.role_security" and collector.status == CollectionStatus.SKIPPED
         for collector in snapshot.instances[0].collectors
+    )
+
+
+@pytest.mark.parametrize("postgres_subservices", [[], ["role-security"]])
+def test_configured_coverage_controls_external_calls(postgres_subservices: list[str]) -> None:
+    from infra_auditor.config import ServiceCoverage
+
+    config = example_resource_config().model_copy(
+        update={
+            "version": 2,
+            "services": ServiceCoverage.model_validate(
+                {
+                    "rds": {"subservices": ["instance"]},
+                    "postgres": {"subservices": postgres_subservices},
+                }
+            ),
+        }
+    )
+    calls: list[str] = []
+
+    def forbidden(_region: str) -> Any:
+        calls.append("disabled-aws")
+        raise AssertionError("disabled collector called")
+
+    def credentials(_region: str) -> Any:
+        calls.append("credentials")
+        return FakeCredentialProvider()
+
+    class TrackingConnectionFactory(FakeConnectionFactory):
+        @contextmanager
+        def connect(self, **kwargs: Any) -> Iterator[FakeConnection]:
+            calls.append("postgres-connect")
+            with super().connect(**kwargs) as connection:
+                yield connection
+
+    snapshot = collect_instance_snapshot(
+        settings=AppSettings(_env_file=None),
+        resource_config=config,
+        alias="raptor-catalog",
+        rds_discovery_factory=lambda _region: FakeRDSDiscovery(example_rds_instance()),
+        credential_provider_factory=credentials,
+        connection_factory=TrackingConnectionFactory(),
+        database_collector=DatabaseDiscoveryCollector(),
+        activity_collector=FakeActivitySummaryCollector(),
+        role_security_collector=FakeRoleSecurityCollector(),
+        security_group_collector_factory=forbidden,
+        cloudwatch_metrics_collector_factory=forbidden,
+        rds_operations_collector_factory=forbidden,
+    )
+    assert calls == (["credentials", "postgres-connect"] if postgres_subservices else [])
+    instance = snapshot.instances[0]
+    assert instance.status == CollectionStatus.SUCCESS
+    assert not instance.gaps
+    assert instance.databases == []
+    assert instance.postgres_activity is None
+    assert (instance.postgres_role_security is not None) == bool(postgres_subservices)
+    statuses = {collector.name: collector.status for collector in instance.collectors}
+    assert statuses["postgres.database_inventory"] == CollectionStatus.SKIPPED
+    assert statuses["aws.cloudwatch.rds_metrics"] == CollectionStatus.SKIPPED
+    assert statuses["postgres.role_security"] == (
+        CollectionStatus.SUCCESS if postgres_subservices else CollectionStatus.SKIPPED
     )

@@ -13,13 +13,15 @@ uv run infra-auditor collect --instance raptor-catalog
 ```text
 Typer CLI
 -> AppSettings from INFRA_AUDITOR_* and optional .env
--> load_resource_config(config/environments.example.yaml)
+-> load_resource_config(config/environments.yaml)
 -> boto3 Session
+-> resolve effective global/instance service coverage
 -> RDS DescribeDBInstances
 -> RDSInstance model
 -> EC2 DescribeSecurityGroups for attached groups
 -> CloudWatch GetMetricData for bounded RDS metric summaries
 -> RDS DescribePendingMaintenanceActions, DescribeDBRecommendations, DescribeDBParameters
+-> enabled PostgreSQL subservices? otherwise record skipped results
 -> Secrets Manager GetSecretValue
 -> PostgresCredentials model
 -> PostgresConnectionFactory
@@ -29,9 +31,9 @@ Typer CLI
 -> deterministic AWS/RDS, PostgreSQL activity, and PostgreSQL security rules
 -> AuditSnapshot model
 -> S3SnapshotWriter
--> eight canonical schema-2 service/subservice evidence artifacts
--> run manifest written last as the completion marker
--> s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=2/.../<YYYYMMDDTHHMMSSZ>.json
+-> seven raw schema-3 artifacts and two service findings under reports/
+-> runs/schema=3/... manifest written last as the completion marker
+-> s3://infra-audit-rl-<SYS_ENV>/raw/snapshots/schema=3/.../<YYYYMMDDTHHMMSSZ>.json
 ```
 
 ### Inputs
@@ -50,7 +52,7 @@ Typer CLI
 - CLI summary with run ID, instance alias, collector status, database count,
   finding count, manifest path, and overall status.
 - Structured logs to stdout/stderr.
-- Eight S3 JSON artifacts containing the same run identity and only their
+- Nine S3 JSON artifacts containing the same run identity and only their
   approved RDS, PostgreSQL, or deterministic-finding boundary fields.
 - One small manifest indexing the exact artifact family. It is written only
   after all artifacts succeed and is the sole completed-run marker.
@@ -133,7 +135,7 @@ For local day-to-day use, the central runner performs dependency checks, loads
 Typer CLI
 -> AppSettings from INFRA_AUDITOR_* and optional .env
 -> FastAPI app on INFRA_AUDITOR_WEB_HOST:INFRA_AUDITOR_WEB_PORT
--> load_resource_config(config/environments.example.yaml)
+-> load_resource_config(config/environments.yaml)
 -> GET / returns lightweight Bootstrap shell and loader
 -> browser fetches GET /view for selected section
 -> boto3 Session
@@ -152,8 +154,7 @@ progress.
 The left pane holds project branding, the current `SYS_ENV` value, the derived
 snapshot bucket name, a full-width global `Sync all` action, and navigation.
 Current live sections are RDS, Database (PG),
-Reports, Raw Data, and Chat. AWS, EC2, Elasticsearch, and Bitbucket are planned
-standalone domains. Runtime selectors live in the right pane, while instance
+Reports, Raw Data, and Chat. Other service placeholders are hidden while PostgreSQL is the active scope. Runtime selectors live in the right pane, while instance
 `Sync now` sits at the right edge of the service heading row. RDS
 owns current RDS instance metadata, RDS operations, RDS-attached security group
 ingress, and CloudWatch RDS metric evidence. Database (PG) owns PostgreSQL
@@ -187,7 +188,7 @@ local storage. These are client-only UI preferences.
 Snapshot reads are boundary-aware and scope S3 listing to:
 
 ```text
-raw/snapshots/schema=2/env=<env>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/
+raw/snapshots/schema=3/env=<env>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/
 ```
 
 ### Outputs
@@ -222,7 +223,7 @@ Typer CLI
 -> infra_auditor.mcp.server
 -> official MCP Python SDK server over stdio
 -> AppSettings from INFRA_AUDITOR_* and optional .env
--> load_resource_config(config/environments.example.yaml)
+-> load_resource_config(config/environments.yaml)
 -> boto3 Session
 -> S3 ListBucket/GetObject for approved manifest/artifact prefixes
 -> SnapshotRunManifest and canonical artifact validation
@@ -247,7 +248,7 @@ Typer CLI
 ### Inputs
 
 - Process settings and non-secret resource registry.
-- Stored manifests and artifacts under fixed `raw/snapshots/schema=2/...`
+- Stored manifests and artifacts under fixed `raw/snapshots/schema=3/...`
   service/subservice partitions.
 
 ### Outputs
@@ -273,3 +274,41 @@ the existing read-only collector workflow and write immutable S3 audit
 artifacts. The today mode checks the latest completed-run manifest for each
 alias and skips collection when one is already partitioned under the current
 UTC day.
+
+## Configured coverage and schema-3 storage
+
+Coverage selects implemented AWS/PG collectors before their external calls.
+Disabled AWS subservices do not construct collector clients. If all PostgreSQL
+subservices are disabled, neither Secrets Manager nor a PostgreSQL connection is
+used. Individual disabled PG collectors do not run SQL. Independent failures
+remain gaps; fixed family artifacts include disabled boundaries as SKIPPED.
+
+Writers append seven evidence objects to `raw/`, two service findings objects to
+`reports/`, then a commit manifest to `runs/`. Failure in either evidence or report
+writes prevents the manifest. Readers compute exact approved keys across those
+three roots. See [storage layout](storage-layout.md). CLI, UI, MCP and today sync
+use the same schema-3 prefix builders. No existing S3 objects are changed.
+
+The console shows effective coverage for the next sync alongside historical run
+statuses. Config changes require restart and an explicit latest sync; today sync
+does not compare configuration. MCP instance summaries expose only safe coverage
+names. The current PostgreSQL connection still targets the bootstrap database;
+per-database orchestration is the next milestone, not part of this cutover.
+
+## Service tree resolution (registry version 3)
+
+`config/environments.yaml` groups targets by service, region and instance.
+`ServiceRegistry` validates code-owned enum names, per-instance replacement lists,
+regional identifiers and explicit PostgreSQL RDS-host references. The current
+adapter requires matching host/PG alias and region and unique aliases across each
+service's regions because existing tool selectors identify jobs by alias.
+It resolves one job per RDS instance, with its actual region and optional PostgreSQL
+coverage/secret reference. Missing PG entries are RDS-only jobs and need no secret.
+The existing runtime, storage, UI and MCP consume these resolved jobs; AWS clients
+use the selected target region. Combined fleet reports label mixed-region results
+`multi-region` rather than the process's default AWS region.
+
+Service enums and selectable collector names are centralized in `capabilities.py`.
+The same service/subservice enum identities are used by artifact contracts. See
+[configuration reference](../config/README.md). The persisted schema-3 S3 paths
+remain unchanged; registry versioning is independent of artifact versioning.

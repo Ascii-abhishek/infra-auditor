@@ -21,8 +21,9 @@ snapshot/report data with controlled latest-data and today-data sync.
 - Collect PostgreSQL role attributes and role memberships.
 - Produce deterministic findings for public exposure, RDS operations, resource
   pressure, connection hygiene, and risky role membership paths.
-- Write canonical schema-2 JSON artifacts for RDS, PostgreSQL, and
-  deterministic-finding boundaries under `raw/snapshots/schema=2/...`.
+- Write canonical schema-3 JSON artifacts for RDS, PostgreSQL, and
+  deterministic findings under separate `raw/` and `reports/` prefixes, with
+  completion manifests under `runs/`.
 - Write a small completion manifest last so reports consume one coherent run
   without duplicating the full evidence payload.
 - Build deterministic snapshot/fleet report summaries and serve a local
@@ -65,3 +66,7 @@ Security boundaries are intentionally strict:
 - No automatic remediation exists in V1.
 - Collectors are read-only and must not fetch application table rows.
 - Query text is minimized and treated as potentially sensitive.
+
+Service coverage and next steps: [modular service catalog](docs/services/README.md),
+[storage layout](docs/storage-layout.md), and
+[PostgreSQL preparation](docs/runbooks/postgres-next-steps.md).

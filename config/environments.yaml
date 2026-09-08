@@ -1,0 +1,39 @@
+# Supported names, dependencies and variations: ./README.md
+# Registry version is independent of the persisted artifact schema.
+version: 3
+
+services:
+  rds:
+    subservices:
+      - instance
+      - operations
+      - ec2-security-groups
+      - cloudwatch-rds-metrics
+    regions:
+      ap-south-1:
+        instances:
+          raptor-catalog:
+            db_instance_identifier: cleancatalograptorsupplies
+          udb:
+            db_instance_identifier: udb
+
+  postgres:
+    subservices:
+      - database-inventory
+      - activity-summary
+      - role-security
+    regions:
+      ap-south-1:
+        instances:
+          raptor-catalog:
+            depends_on:
+              service: rds
+              region: ap-south-1
+              instance: raptor-catalog
+            secret_id: infra-auditor/postgres/raptor-catalog
+          udb:
+            depends_on:
+              service: rds
+              region: ap-south-1
+              instance: udb
+            secret_id: infra-auditor/postgres/udb

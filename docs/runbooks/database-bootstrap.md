@@ -1,18 +1,21 @@
 # Database Bootstrap Runbook
 
 This runbook records intended PostgreSQL safety posture. V0.1 code does not create roles or grants.
+The current manual setup SQL is in [PostgreSQL next steps](postgres-next-steps.md#4-update-the-existing-group-and-project-login).
+One NOLOGIN group holds permissions; one project LOGIN connects across databases.
+The dated checks below refer to the previous role names and must be revalidated.
 
 ## Intended Roles
 
 ```text
-grp_rl_rds_auditor
-prj_rl_rds_auditor_prod
+grp_rl_infra_auditor
+prj_rl_infra_auditor
 ```
 
 ## Intended Grants
 
 ```text
-grp_rl_rds_auditor:
+grp_rl_infra_auditor:
     pg_read_all_settings
     pg_read_all_stats
 ```

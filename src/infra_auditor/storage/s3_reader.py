@@ -19,8 +19,7 @@ from infra_auditor.models.snapshot_split import (
     assemble_snapshot,
 )
 from infra_auditor.storage.s3 import (
-    MANIFEST_SERVICE,
-    MANIFEST_SUBSERVICE,
+    artifact_root,
     build_artifact_key,
     build_run_manifest_key,
     build_snapshot_artifact_key,
@@ -321,14 +320,11 @@ def build_snapshot_manifest_prefix(
 
     return "/".join(
         [
-            "raw",
-            "snapshots",
+            "runs",
             f"schema={schema_version}",
             f"env={environment}",
-            f"service={MANIFEST_SERVICE}",
             f"region={region}",
             f"instance={instance_alias}",
-            f"subservice={MANIFEST_SUBSERVICE}",
             "",
         ]
     )
@@ -347,7 +343,7 @@ def build_snapshot_artifact_prefix(
 
     return "/".join(
         [
-            "raw",
+            artifact_root(subservice.value),
             "snapshots",
             f"schema={schema_version}",
             f"env={environment}",
@@ -374,7 +370,7 @@ def build_snapshot_artifact_prefix_for_date(
 
     return "/".join(
         [
-            "raw",
+            artifact_root(subservice.value),
             "snapshots",
             f"schema={schema_version}",
             f"env={environment}",

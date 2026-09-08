@@ -77,6 +77,11 @@ def build_fleet_report(
     """Build a report summary across the latest snapshots for one service."""
 
     severity_counts = _combine_severity_counts(report.severity_counts for report in reports)
+    source_regions = {report.region for report in reports}
+    if len(source_regions) == 1:
+        region = next(iter(source_regions))
+    elif len(source_regions) > 1:
+        region = "multi-region"
     return FleetReport(
         service=service,
         environment=environment,

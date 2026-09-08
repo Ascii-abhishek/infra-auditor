@@ -8,9 +8,9 @@ from infra_auditor.exceptions import ConfigurationError
 
 
 def test_load_example_resource_config() -> None:
-    config = load_resource_config(Path("config/environments.example.yaml"))
+    config = load_resource_config(Path("config/environments.yaml"))
 
-    assert config.version == 1
+    assert config.version == 3
     assert config.aws.default_region == "ap-south-1"
     assert config.instances["raptor-catalog"].db_instance_identifier == "cleancatalograptorsupplies"
     assert config.instances["udb"].secret_id == "infra-auditor/postgres/udb"
@@ -72,3 +72,41 @@ def test_settings_overrides_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = AppSettings(_env_file=None)
 
     assert settings.log_format == LogFormat.JSON
+
+
+def test_coverage_rejects_unknown_services_and_unsafe_dependencies() -> None:
+    from infra_auditor.config import ServiceCoverage
+
+    for raw in (
+        {"elasticsearch": {}},
+        {"postgres": {"subservices": ["execute_sql"]}},
+        {"rds": {"subservices": ["operations"]}},
+        {"postgres": {"subservices": ["role-security", "role-security"]}},
+        {"postgres": {"password": "not-a-real-secret"}},
+    ):
+        with pytest.raises(ValidationError):
+            ServiceCoverage.model_validate(raw)
+
+
+def test_instance_coverage_replaces_defaults_and_version_one_stays_compatible() -> None:
+    from infra_auditor.config import ResourceConfig
+
+    raw = {
+        "version": 2,
+        "aws": {"default_region": "ap-south-1"},
+        "services": {"postgres": {"subservices": []}},
+        "instances": {
+            "db": {
+                "db_instance_identifier": "example",
+                "secret_id": "example",
+                "services": {"postgres": {"subservices": ["role-security"]}},
+            },
+            "other": {"db_instance_identifier": "other", "secret_id": "other"},
+        },
+    }
+    config = ResourceConfig.model_validate(raw)
+    assert config.coverage_for_instance("db").postgres.subservices == ["role-security"]
+    assert config.coverage_for_instance("other").postgres.subservices == []
+    raw["version"] = 1
+    with pytest.raises(ValidationError, match="requires registry version 2"):
+        ResourceConfig.model_validate(raw)

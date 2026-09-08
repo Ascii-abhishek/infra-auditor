@@ -27,3 +27,9 @@ manifest for the current UTC day. A generic
 `execute_sql(sql)` or `run_query(sql)` tool is explicitly out of bounds, as are
 arbitrary AWS calls, arbitrary S3 key reads, secret reads, query text retrieval,
 and remediation.
+
+Registry version 3 resolves service/region/instance targets and exposes effective service coverage in instance summaries.
+Only RDS/PostgreSQL boundaries are approved. Schema 3 reads raw evidence from
+`raw/`, deterministic findings from `reports/`, and completed-run manifests from
+`runs/`. All three prefixes are fixed and constrained to the configured bucket,
+environment, region and instance. Config changes need restart and a latest sync.

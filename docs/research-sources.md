@@ -418,3 +418,37 @@ Record current official documentation used for architectural or implementation d
 - Date consulted: 2026-09-07
 - Conclusion: Glue crawlers can create partition indexes for S3 targets. This
   does not require preserving duplicated full JSON snapshots in the raw zone.
+
+## 2026-09-08 PostgreSQL access preparation
+
+- PostgreSQL predefined roles: https://www.postgresql.org/docs/current/predefined-roles.html
+  — monitoring roles are distinct from broad application-data access.
+- PostgreSQL privileges: https://www.postgresql.org/docs/current/ddl-priv.html
+  — CONNECT is separate from table SELECT.
+- PostgreSQL privilege inquiry functions: https://www.postgresql.org/docs/18/functions-info.html
+  — `has_database_privilege` permits metadata-only CONNECT verification.
+
+Used for the manual next-step runbook; no live grants or database access occurred.
+
+## 2026-09-08 Existing auditor login/group setup
+
+- https://www.postgresql.org/docs/15/sql-alterrole.html — role defaults apply at
+  login; SET ROLE does not apply them; non-superuser attribute restrictions.
+- https://www.postgresql.org/docs/15/predefined-roles.html — separate monitoring
+  privileges without broad data access.
+- https://www.postgresql.org/docs/16/sql-grant.html — per-membership INHERIT/SET
+  options on PostgreSQL 16+, distinguished from the current PostgreSQL 15 flow.
+- https://www.postgresql.org/docs/16/functions-info.html — metadata-only privilege
+  checks with pg_has_role, has_database_privilege and table/column access checks.
+
+Used for the one-block manual administrator runbook. No live SQL execution.
+
+## 2026-09-08 S3 permission diagnosis
+
+- https://docs.aws.amazon.com/singlesignon/latest/userguide/howtoviewandchangepermissionset.html
+  — saving and updating permission sets in assigned accounts.
+- https://docs.aws.amazon.com/AmazonS3/latest/userguide/amazon-s3-policy-keys.html
+  — ListBucket prefix conditions, distinct from object resource permissions.
+
+Live probes were restricted to caller identity, approved S3 reads/listings and
+role-policy inspection (denied). No live mutation during diagnosis.

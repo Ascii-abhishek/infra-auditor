@@ -44,13 +44,13 @@ SYS_ENV=prod -> infra-audit-rl-prod
 Canonical instance-scoped artifact keys use:
 
 ```text
-raw/snapshots/schema=2/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+raw/snapshots/schema=3/env=<SYS_ENV>/service=<service>/region=<region>/instance=<alias>/subservice=<subservice>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 Each completed instance collection writes a small manifest last:
 
 ```text
-raw/snapshots/schema=2/env=<SYS_ENV>/service=audit/region=<region>/instance=<alias>/subservice=run-manifest/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
+runs/schema=3/env=<SYS_ENV>/region=<region>/instance=<alias>/dt=<YYYY-MM-DD>/<YYYYMMDDTHHMMSSZ>.json
 ```
 
 Current RDS subservices include RDS instance metadata, RDS operations, attached
@@ -63,23 +63,33 @@ omit `instance`, use `region=global` for non-regional evidence, and use
 
 ## Resource Registry
 
-The non-secret resource registry is YAML:
+The active file is [config/environments.yaml](../config/environments.yaml).
+Registry version 3 uses `services → regions → instances`, with service-level
+subservice defaults, per-instance list replacements, and explicit PostgreSQL
+RDS-host references. The complete supported syntax, enums, examples, dependencies
+and current adapter constraints are in the adjacent
+[config/README.md](../config/README.md).
 
-```yaml
-version: 1
+The human-managed tree is service-shaped. Reviewed code resolves it to today's
+bounded paired RDS/PostgreSQL jobs. Every instance carries its actual region;
+the first RDS region is used only as the legacy default display value. There is
+no region fallback inside the version-3 tree. Legacy registry versions 1/2 are
+still readable, but new configuration should use version 3.
 
-aws:
-  default_region: ap-south-1
+RDS instance discovery is mandatory for this adapter. Omit a PostgreSQL instance
+or set its `subservices: []` to skip credentials and database connections.
+Disabled collectors are intentionally not checked; failure means an enabled
+collector attempted work and encountered an error. Neither proves service health.
 
-instances:
-  raptor-catalog:
-    db_instance_identifier: cleancatalograptorsupplies
-    secret_id: infra-auditor/postgres/raptor-catalog
-```
+Unknown services/subservices, wrong-service names, duplicate selections, missing
+host references, ambiguous aliases and missing enabled PostgreSQL secret references
+fail validation before external access. YAML selects implemented capabilities;
+it cannot add generic SQL, imports, API execution or unimplemented policy rules.
 
-The registry answers: what resources should be audited?
-
-AWS discovery answers: what do those resources currently look like?
+The console displays effective coverage; `config validate` prints it; MCP
+`list_audit_instances` includes it without secret IDs. Restart UI/MCP after config
+changes and use latest/Sync all; today sync checks dates, not configuration changes.
+Approved historical evidence remains readable when its collector is later disabled.
 
 ## Prohibited Config Values
 
@@ -102,7 +112,7 @@ Secrets Manager values are expected to be JSON:
 
 ```json
 {
-  "username": "prj_rl_rds_auditor_prod",
+  "username": "prj_rl_infra_auditor",
   "password": "replace-at-creation-time"
 }
 ```
@@ -169,3 +179,8 @@ The MCP server uses the same settings and resource registry as the UI. It reads
 approved S3 artifact/report data for configured instances only and may run the
 existing read-only collector workflow through `sync_latest_audit_data` or
 `sync_today_audit_data`.
+
+## Storage cutover
+
+See [storage layout](storage-layout.md) for raw/report/manifest paths and
+[practical next steps](runbooks/postgres-next-steps.md) for IAM prefix updates.

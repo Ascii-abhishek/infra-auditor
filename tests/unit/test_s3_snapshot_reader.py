@@ -102,7 +102,7 @@ def test_reader_reassembles_latest_completed_artifact_family() -> None:
     assert client.list_calls[0]["Prefix"] == build_snapshot_manifest_prefix(
         environment="dev", region="ap-south-1", instance_alias="db"
     )
-    assert len(client.get_calls) == 9
+    assert len(client.get_calls) == 10
 
 
 def test_reader_lists_and_reads_one_canonical_artifact_boundary() -> None:
@@ -119,7 +119,7 @@ def test_reader_lists_and_reads_one_canonical_artifact_boundary() -> None:
 
     assert artifact.metadata.service == SnapshotSplitService.POSTGRES
     assert item.key.startswith(
-        "raw/snapshots/schema=2/env=dev/service=postgres/region=ap-south-1/"
+        "raw/snapshots/schema=3/env=dev/service=postgres/region=ap-south-1/"
         "instance=db/subservice=database-inventory/"
     )
     assert client.list_calls[0]["Prefix"] == build_snapshot_artifact_prefix(
@@ -192,3 +192,32 @@ def _snapshot() -> AuditSnapshot:
             )
         ],
     )
+
+
+def test_storage_separates_evidence_reports_and_completion_markers() -> None:
+    from infra_auditor.storage.s3 import S3SnapshotWriter
+
+    client = FakeS3ReadClient(_snapshot())
+    assert client.manifest_key.startswith("runs/schema=3/")
+    raw = [key for key in client.payloads if key.startswith("raw/")]
+    reports = [key for key in client.payloads if key.startswith("reports/")]
+    assert len(raw) == 7
+    assert len(reports) == 2
+    assert all("deterministic-findings" not in key for key in raw)
+    assert all("service=audit" not in key for key in client.payloads)
+    assert {ref.service.value for ref in client.manifest.artifacts} == {"rds", "postgres"}
+
+    class FailingWriter:
+        def __init__(self) -> None:
+            self.keys: list[str] = []
+
+        def put_object(self, **kwargs: Any) -> dict[str, Any]:
+            self.keys.append(kwargs["Key"])
+            if kwargs["Key"].startswith("reports/"):
+                raise RuntimeError("simulated report write failure")
+            return {}
+
+    failing = FailingWriter()
+    with pytest.raises(RuntimeError, match="simulated"):
+        S3SnapshotWriter(failing, "infra-audit-rl-dev").write(_snapshot())
+    assert not any(key.startswith("runs/") for key in failing.keys)

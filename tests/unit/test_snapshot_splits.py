@@ -65,7 +65,7 @@ def test_snapshot_split_artifacts_keep_service_and_heuristic_boundaries() -> Non
 
     artifacts = build_snapshot_split_artifacts(snapshot)
 
-    assert len(artifacts) == 8
+    assert len(artifacts) == 9
     by_key = {
         (artifact.metadata.service, artifact.metadata.subservice): artifact
         for artifact in artifacts
@@ -76,7 +76,7 @@ def test_snapshot_split_artifacts_keep_service_and_heuristic_boundaries() -> Non
     ]
     heuristic_artifact = by_key[
         (
-            SnapshotSplitService.AUDIT_HEURISTICS,
+            SnapshotSplitService.POSTGRES,
             SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS,
         )
     ]

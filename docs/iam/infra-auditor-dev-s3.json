@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListDevAuditorArtifactPrefixes",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::infra-audit-rl-dev",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "raw/snapshots/schema=3/*",
+            "reports/snapshots/schema=3/*",
+            "runs/schema=3/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteDevAuditorArtifacts",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": [
+        "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/reports/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/runs/schema=3/*"
+      ]
+    }
+  ]
+}

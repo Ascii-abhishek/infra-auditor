@@ -48,11 +48,11 @@ class FakeReader:
         self.object = S3SnapshotObject(
             bucket="infra-audit-rl-dev",
             key=(
-                "raw/snapshots/schema=2/env=dev/service=rds/region=ap-south-1/"
+                "raw/snapshots/schema=3/env=dev/service=rds/region=ap-south-1/"
                 "instance=db/subservice=instance/dt=2026-09-04/20260904T060000Z.json"
             ),
             uri=(
-                "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/service=rds/"
+                "s3://infra-audit-rl-dev/raw/snapshots/schema=3/env=dev/service=rds/"
                 "region=ap-south-1/instance=db/subservice=instance/dt=2026-09-04/"
                 "20260904T060000Z.json"
             ),
@@ -144,7 +144,7 @@ def test_dashboard_renders_service_nav_and_right_pane_views() -> None:
     assert "/static/app.css?v=" in shell_html
     assert '<div class="brand-title">Infra Auditor</div>' in shell_html
     assert "Database (PG)" in shell_html
-    assert "EC2" in shell_html
+    assert "EC2" not in shell_html
     assert "CloudWatch" not in shell_html
     assert rds_response.status_code == 200
     rds_html = rds_response.body.decode("utf-8")
@@ -165,9 +165,9 @@ def test_dashboard_renders_service_nav_and_right_pane_views() -> None:
     assert "Database (PG)" in postgres_html
     assert "app_db" in postgres_html
     assert aws_response.status_code == 200
-    assert "AWS does not have a standalone collector yet" in aws_response.body.decode("utf-8")
+    assert "RDS Audit" in aws_response.body.decode("utf-8")
     assert ec2_response.status_code == 200
-    assert "EC2 does not have a standalone collector yet" in ec2_response.body.decode("utf-8")
+    assert "RDS Audit" in ec2_response.body.decode("utf-8")
     assert chat_response.status_code == 200
     chat_html = chat_response.body.decode("utf-8")
     assert "Audit Chat" in chat_html

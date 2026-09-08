@@ -124,7 +124,11 @@ repository:
       "Sid": "WriteDevInfraAuditSnapshots",
       "Effect": "Allow",
       "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/*"
+      "Resource": [
+        "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/reports/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/runs/schema=3/*"
+      ]
     },
     {
       "Sid": "ListDevInfraAuditSnapshotsForReports",
@@ -133,7 +137,11 @@ repository:
       "Resource": "arn:aws:s3:::infra-audit-rl-dev",
       "Condition": {
         "StringLike": {
-          "s3:prefix": "raw/snapshots/*"
+          "s3:prefix": [
+            "raw/snapshots/schema=3/*",
+            "reports/snapshots/schema=3/*",
+            "runs/schema=3/*"
+          ]
         }
       }
     },
@@ -141,7 +149,11 @@ repository:
       "Sid": "ReadDevInfraAuditSnapshotsForReports",
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/*"
+      "Resource": [
+        "arn:aws:s3:::infra-audit-rl-dev/raw/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/reports/snapshots/schema=3/*",
+        "arn:aws:s3:::infra-audit-rl-dev/runs/schema=3/*"
+      ]
     },
     {
       "Sid": "ReadAttachedSecurityGroups",
@@ -277,7 +289,7 @@ Each secret value must contain only:
 
 ```json
 {
-  "username": "prj_rl_rds_auditor_prod",
+  "username": "prj_rl_infra_auditor",
   "password": "set-in-secrets-manager"
 }
 ```
@@ -310,7 +322,7 @@ import json
 import os
 
 print(json.dumps({
-    "username": "prj_rl_rds_auditor_prod",
+    "username": "prj_rl_infra_auditor",
     "password": os.environ["IA_DB_PASSWORD"],
 }))
 PY
@@ -368,7 +380,7 @@ with `engine`, `host`, `port`, `dbname`, or `dbInstanceIdentifier`.
   implemented collectors.
 - CloudWatch logs reads only when collectors use them.
 - Performance Insights/Database Insights reads only when collectors use them.
-- S3 `PutObject` to the approved `raw/snapshots/*` prefix in the production
+- S3 `PutObject` to the approved schema-3 raw, reports and runs prefixes in the production
   audit bucket.
 - SES send permissions only when reports are implemented.
 

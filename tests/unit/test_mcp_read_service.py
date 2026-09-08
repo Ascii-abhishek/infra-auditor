@@ -26,12 +26,12 @@ class FakeReader:
         self.object = S3SnapshotObject(
             bucket="infra-audit-rl-dev",
             key=(
-                "raw/snapshots/schema=2/env=dev/service=audit/region=ap-south-1/"
-                "instance=db/subservice=run-manifest/dt=2026-09-04/20260904T070000Z.json"
+                "runs/schema=3/env=dev/region=ap-south-1/"
+                "instance=db/dt=2026-09-04/20260904T070000Z.json"
             ),
             uri=(
-                "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/service=audit/"
-                "region=ap-south-1/instance=db/subservice=run-manifest/dt=2026-09-04/"
+                "s3://infra-audit-rl-dev/runs/schema=3/env=dev/"
+                "region=ap-south-1/instance=db/dt=2026-09-04/"
                 "20260904T070000Z.json"
             ),
             size_bytes=100,
@@ -41,19 +41,19 @@ class FakeReader:
         self.split_object = S3ArtifactObject(
             bucket="infra-audit-rl-dev",
             key=(
-                "raw/snapshots/schema=2/env=dev/service=audit-heuristics/"
+                "raw/snapshots/schema=3/env=dev/service=postgres/"
                 "region=ap-south-1/instance=db/subservice=deterministic-findings/"
                 "dt=2026-09-04/20260904T070000Z.json"
             ),
             uri=(
-                "s3://infra-audit-rl-dev/raw/snapshots/schema=2/env=dev/"
-                "service=audit-heuristics/region=ap-south-1/instance=db/"
+                "s3://infra-audit-rl-dev/raw/snapshots/schema=3/env=dev/"
+                "service=postgres/region=ap-south-1/instance=db/"
                 "subservice=deterministic-findings/"
                 "dt=2026-09-04/20260904T070000Z.json"
             ),
             size_bytes=50,
             last_modified=datetime(2026, 9, 4, 7, 0, tzinfo=UTC),
-            service=SnapshotSplitService.AUDIT_HEURISTICS,
+            service=SnapshotSplitService.POSTGRES,
             subservice=SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS,
         )
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -89,7 +89,7 @@ def test_audit_read_service_exposes_configured_reports_and_splits() -> None:
 
     boundary = service.describe_data_boundary()
     assert boundary.completed_run_manifests is True
-    assert boundary.artifact_services["audit-heuristics"] == ["deterministic-findings"]
+    assert "deterministic-findings" in boundary.artifact_services["postgres"]
     assert "rds" in boundary.artifact_services
     assert "cloudwatch-rds-metrics" in boundary.artifact_services["rds"]
     assert "generic SQL execution" in boundary.forbidden_capabilities
@@ -102,16 +102,16 @@ def test_audit_read_service_exposes_configured_reports_and_splits() -> None:
 
     split_objects = service.list_artifacts(
         instance_alias="db",
-        service="audit-heuristics",
+        service="postgres",
         subservice="deterministic-findings",
     )
     split = service.get_latest_artifact(
         instance_alias="db",
-        service="audit-heuristics",
+        service="postgres",
         subservice="deterministic-findings",
     )
     assert split_objects[0].subservice == SnapshotSplitSubservice.AUDIT_DETERMINISTIC_FINDINGS
-    assert split.artifact.metadata.service == SnapshotSplitService.AUDIT_HEURISTICS
+    assert split.artifact.metadata.service == SnapshotSplitService.POSTGRES
 
 
 def test_create_mcp_server_registers_with_injected_read_service() -> None:

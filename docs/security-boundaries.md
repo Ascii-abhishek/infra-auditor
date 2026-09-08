@@ -60,8 +60,8 @@ The system may recommend actions, but V1 must not automatically create/drop inde
 The intended PostgreSQL collector roles are:
 
 ```text
-grp_rl_rds_auditor
-prj_rl_rds_auditor_prod
+grp_rl_infra_auditor
+prj_rl_infra_auditor
 ```
 
 Current intended grants:
@@ -126,7 +126,10 @@ The collector must not call AWS mutating APIs such as `ModifyDBInstance`,
 `RevokeSecurityGroupIngress`, or `ApplyPendingMaintenanceAction`.
 
 Artifact writers may use `s3:PutObject` only for approved immutable audit
-artifact prefixes such as `raw/snapshots/*`.
+artifact prefixes: `raw/snapshots/schema=3/*`,
+`reports/snapshots/schema=3/*`, and `runs/schema=3/*` in the configured bucket.
+The owner requested this purpose split; it moves approved findings and completion
+metadata out of raw, without adding arbitrary write access or deletion rights.
 
 ## Report Console Boundary
 

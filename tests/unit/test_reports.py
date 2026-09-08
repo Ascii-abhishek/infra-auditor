@@ -171,3 +171,14 @@ def _example_snapshot() -> AuditSnapshot:
             )
         ],
     )
+
+
+def test_fleet_region_comes_from_evidence_instead_of_runtime_default() -> None:
+    first = build_snapshot_report(_example_snapshot())
+    second = first.model_copy(update={"region": "eu-west-1"})
+    mixed = build_fleet_report(
+        [first, second], service="audit", environment="dev", region="us-east-1"
+    )
+    assert mixed.region == "multi-region"
+    single = build_fleet_report([second], service="audit", environment="dev", region="us-east-1")
+    assert single.region == "eu-west-1"
